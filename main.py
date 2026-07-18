@@ -3,6 +3,7 @@ import random
 import asyncio
 import time
 import shutil
+import uuid
 from typing import Any, Dict, List, Optional
 
 import aiohttp
@@ -166,6 +167,7 @@ MUSIC_HELP_TEXT = """🎵 网易云音乐 使用说明
 📌 基本命令（别名：/音乐）
   /music <歌曲名>       搜索并获取歌曲信息（点歌）
   /music direct <歌曲名> 仅返回语音条（别名：直接）
+  /music file <歌曲名>  返回原始音乐文件（别名：文件）
   /music id:<歌曲ID>    通过歌曲ID获取详细信息（别名：编号:<ID>）
   /music search <关键词> 搜索歌曲列表（别名：搜索）
   /music help           显示此帮助信息
@@ -173,6 +175,7 @@ MUSIC_HELP_TEXT = """🎵 网易云音乐 使用说明
 📌 中文用法示例
   /音乐 孤勇者              点歌
   /音乐 直接 孤勇者         仅返回语音条
+  /音乐 文件 孤勇者         返回原始音乐文件
   /音乐 搜索 陈奕迅         搜索歌曲列表
   /音乐 编号:1901371647     通过ID获取歌曲
 
@@ -183,6 +186,9 @@ MUSIC_HELP_TEXT = """🎵 网易云音乐 使用说明
 
   仅语音条（不附带标题、封面等）：
     /music direct 孤勇者       只返回语音消息
+
+  原始音乐文件（不转码）：
+    /music file 孤勇者         返回原始音频附件
 
   通过ID获取：
     /music id:1901371647       获取指定ID的歌曲信息
@@ -196,10 +202,12 @@ MUSIC_HELP_TEXT = """🎵 网易云音乐 使用说明
   • 音质信息（码率、格式）
   • 播放链接
   • 语音条（自动转码为MP3格式）
+  • 原始音乐文件（文件模式，不转码）
 
 ⚠️ 注意事项
   • 部分VIP歌曲可能无法获取播放链接
   • 播放链接有时效性，请及时使用
+  • 原始文件受平台文件大小和格式限制
   • 数据来源于网易云音乐，仅供个人试听
   • 如遇问题可发送 /music help 查看帮助"""
 
@@ -1619,6 +1627,42 @@ class CurrentCortexPlugin(Star):
                 yield event.plain_result(response_text)
                 return
 
+            # file模式：返回未经转码的原始音乐文件
+            file_match = re.match(r"^(file|文件)\s+(.+)$", query, re.IGNORECASE)
+            if file_match:
+                file_query = file_match.group(2).strip()
+                logger.info(
+                    f"[Music] Download original file '{file_query}' for user {user_name}"
+                )
+                songs = await self._netease_client.search_songs(file_query)
+                if not songs:
+                    yield event.plain_result(f"😕 未找到与「{file_query}」相关的歌曲")
+                    return
+
+                song_id = str(songs[0].get("id", ""))
+                if not song_id:
+                    yield event.plain_result("⚠️ 搜索结果异常，未能获取歌曲ID")
+                    return
+
+                song_data = await self._netease_client.get_song(song_id)
+                file_path = await self._download_source_audio_to_temp(
+                    song_data.get("url", ""),
+                    song_data.get("name", file_query),
+                    song_data.get("type", ""),
+                )
+                if not file_path:
+                    yield event.plain_result(
+                        f"❌ 无法获取原始音乐文件：{song_data.get('name', file_query)}"
+                    )
+                    return
+
+                file_name = self._build_audio_filename(
+                    song_data.get("name", file_query), file_path
+                )
+                yield event.chain_result([Comp.File(name=file_name, file=file_path)])
+                logger.info(f"[Music] 已添加原始音乐文件: {file_name} -> {file_path}")
+                return
+
             # direct模式：仅返回语音条，不附带额外信息
             direct_match = re.match(r"^(direct|直接)\s+(.+)$", query, re.IGNORECASE)
             if direct_match:
@@ -1752,7 +1796,7 @@ class CurrentCortexPlugin(Star):
             try:
                 local_path = await self._download_audio_to_temp(url, name)
                 if local_path:
-                    record_comp = Comp.Record(file=local_path, url=url)
+                    record_comp = Comp.Record.fromFileSystem(local_path)
                     results.append(event.chain_result([record_comp]))
                     logger.info(f"[Music] 已添加语音消息: {name} -> {local_path}")
                 elif not direct_mode:
@@ -1767,6 +1811,71 @@ class CurrentCortexPlugin(Star):
             results.append(event.plain_result("⚠️ 无法获取播放链接（可能需要VIP权限）"))
 
         return results
+
+    @staticmethod
+    def _audio_extension(file_type: str, url: str) -> str:
+        normalized_type = str(file_type).lower().strip().lstrip(".")
+        if normalized_type in {"mp3", "flac", "wav", "m4a", "aac", "ogg", "opus"}:
+            return f".{normalized_type}"
+
+        url_without_query = url.lower().split("?", 1)[0]
+        for extension in (".flac", ".wav", ".m4a", ".aac", ".ogg", ".opus", ".mp3"):
+            if url_without_query.endswith(extension):
+                return extension
+        return ".mp3"
+
+    @classmethod
+    def _build_audio_filename(cls, name: str, source_path: str) -> str:
+        safe_name = re.sub(r"[^\w\-.]", "_", name)[:50] or "music"
+        return f"{safe_name}{os.path.splitext(source_path)[1]}"
+
+    async def _download_source_audio_to_temp(
+        self, url: str, name: str, file_type: str = ""
+    ) -> Optional[str]:
+        """原样下载音频文件，供文件模式作为附件发送。"""
+        if not url:
+            logger.warning("[Music] 原始文件下载失败：没有播放链接")
+            return None
+
+        temp_path = None
+        downloaded = False
+        try:
+            temp_dir = os.path.join(tempfile.gettempdir(), "astrbot_music")
+            os.makedirs(temp_dir, exist_ok=True)
+            self._cleanup_old_audio_files(temp_dir)
+
+            safe_name = re.sub(r"[^\w\-.]", "_", name)[:50] or "music"
+            request_id = uuid.uuid4().hex[:12]
+            extension = self._audio_extension(file_type, url)
+            temp_path = os.path.join(
+                temp_dir, f"{safe_name}_{request_id}_source{extension}"
+            )
+
+            timeout = aiohttp.ClientTimeout(total=30)
+            headers = {"User-Agent": "AstrBot-Music-Plugin/1.0"}
+            if self._leiz_api_key:
+                headers["x-api-key"] = self._leiz_api_key
+            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+                async with session.get(url) as resp:
+                    if resp.status != 200:
+                        logger.warning(f"[Music] 下载原始音乐失败: HTTP {resp.status}")
+                        return None
+                    with open(temp_path, "wb") as audio_file:
+                        async for chunk in resp.content.iter_chunked(8192):
+                            audio_file.write(chunk)
+                    downloaded = True
+
+            logger.info(
+                f"[Music] 原始音频已下载（未转码）: {temp_path} "
+                f"({os.path.getsize(temp_path) / (1024 * 1024):.2f}MB)"
+            )
+            return temp_path
+        except Exception as e:
+            logger.warning(f"[Music] 下载原始音乐异常: {e}")
+            return None
+        finally:
+            if temp_path and not downloaded:
+                self._remove_file(temp_path)
 
     async def _download_audio_to_temp(self, url: str, name: str) -> Optional[str]:
         """下载音频文件到临时目录，并压缩为语音条专用低码率 MP3。
@@ -1788,8 +1897,11 @@ class CurrentCortexPlugin(Star):
 
             self._cleanup_old_audio_files(temp_dir)
 
-            safe_name = re.sub(r"[^\w\-.]", "_", name)[:50]
-            temp_path = os.path.join(temp_dir, f"{safe_name}{ext}")
+            safe_name = re.sub(r"[^\w\-.]", "_", name)[:50] or "music"
+            request_id = uuid.uuid4().hex[:12]
+            temp_path = os.path.join(
+                temp_dir, f"{safe_name}_{request_id}_source{ext}"
+            )
 
             timeout = aiohttp.ClientTimeout(total=30)
             # LeiZ 接口要求所有请求携带 API Key（鉴权头为 x-api-key）。
@@ -1817,29 +1929,29 @@ class CurrentCortexPlugin(Star):
             compressed = await self._compress_for_voice(temp_path, temp_dir, safe_name)
             if compressed:
                 return compressed
-            logger.warning(
-                f"[Music] 压缩失败，将使用原始文件发送语音条（可能超限）: {temp_path}"
-            )
-            return temp_path
+
+            logger.warning(f"[Music] 压缩失败，取消发送原始音频: {temp_path}")
+            self._remove_file(temp_path)
+            return None
 
         except Exception as e:
             logger.warning(f"[Music] 下载音频异常: {e}")
+            if "temp_path" in locals():
+                self._remove_file(temp_path)
             return None
 
     async def _compress_for_voice(
         self, source_path: str, temp_dir: str, safe_name: str
     ) -> Optional[str]:
-        """将音频压缩为语音条专用的低码率 MP3。
-
-        平台语音消息（Record/silk）有严格的大小限制，原文件（如 320kbps
-        立体声，4分钟约 9MB）会触发"发送消息链失败"。语音场景不需要高音质，
-        故统一压到 64kbps 单声道——4分钟歌曲约 1.8MB，兼顾体积与清晰度。
-        """
+        """将音频压缩为语音条专用的低码率 MP3。"""
         if not shutil.which("ffmpeg"):
-            logger.warning("[Music] ffmpeg 未安装，无法压缩音频，语音条可能超限")
+            logger.warning("[Music] ffmpeg 未安装，无法压缩音频")
             return None
 
-        mp3_path = os.path.join(temp_dir, f"{safe_name}.mp3")
+        request_id = uuid.uuid4().hex[:12]
+        mp3_path = os.path.join(temp_dir, f"{safe_name}_{request_id}_voice.mp3")
+        proc = None
+        compressed_path = None
         try:
             proc = await asyncio.create_subprocess_exec(
                 "ffmpeg",
@@ -1857,23 +1969,46 @@ class CurrentCortexPlugin(Star):
                 "64k",  # 码率：4分钟约 1.8MB
                 mp3_path,
                 stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
             )
-            await asyncio.wait_for(proc.wait(), timeout=60)
-            if proc.returncode == 0 and os.path.exists(mp3_path):
-                # 压缩后体积应明显小于源文件；删除源文件（若与输出不同）
-                if os.path.abspath(source_path) != os.path.abspath(mp3_path):
-                    os.remove(source_path)
-                src_mb = os.path.getsize(mp3_path) / (1024 * 1024)
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+            if proc.returncode == 0 and os.path.isfile(mp3_path):
+                self._remove_file(source_path)
+                size_mb = os.path.getsize(mp3_path) / (1024 * 1024)
                 logger.info(
-                    f"[Music] 已压缩为语音条 MP3 (64kbps mono): {mp3_path} ({src_mb:.2f}MB)"
+                    f"[Music] 已压缩为语音条 MP3 (64kbps mono): {mp3_path} ({size_mb:.2f}MB)"
                 )
-                return mp3_path
+                compressed_path = mp3_path
+            else:
+                error_detail = (stderr or b"").decode(
+                    "utf-8", errors="replace"
+                ).strip()
+                if len(error_detail) > 1000:
+                    error_detail = f"{error_detail[-1000:]} (已截断)"
+                logger.warning(
+                    f"[Music] ffmpeg 压缩失败，退出码 {proc.returncode}: "
+                    f"{error_detail or '无错误输出'}"
+                )
         except asyncio.TimeoutError:
             logger.warning("[Music] ffmpeg 压缩超时")
+            if proc and proc.returncode is None:
+                proc.kill()
+                await proc.wait()
         except Exception as e:
             logger.warning(f"[Music] ffmpeg 压缩异常: {e}")
-        return None
+        finally:
+            if compressed_path is None:
+                self._remove_file(mp3_path)
+        return compressed_path
+
+    @staticmethod
+    def _remove_file(file_path: str):
+        try:
+            os.remove(file_path)
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            logger.debug(f"[Music] 清理临时文件失败: {file_path}: {e}")
 
     @staticmethod
     def _cleanup_old_audio_files(temp_dir: str, max_age_seconds: int = 3600):
