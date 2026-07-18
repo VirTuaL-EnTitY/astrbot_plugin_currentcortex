@@ -16,6 +16,7 @@
 
 import re
 import os
+import uuid
 import asyncio
 import time
 import tempfile
@@ -38,7 +39,11 @@ class DGLabCommandError(Exception):
         self.suggestion = suggestion
 
 
-# 预设波形数据（每条8字节HEX，代表100ms脉冲）
+# 预设波形数据
+# 帧格式（V3 协议，8 字节 / 16 位 HEX，代表 100ms 输出）：
+#   字节 0-3  = 频率（每字节对应 25ms，有效范围 0x0A-0xF0 / 10-240）
+#   字节 4-7  = 强度（每字节对应 25ms，有效范围 0x00-0x64 / 0-100）
+# 频率 < 0x0A 或强度 > 0x64 的帧会被设备整帧丢弃，故所有预设必须满足上述范围。
 WAVE_PRESETS = {
     "breathe": {
         "name": "呼吸",
@@ -109,20 +114,80 @@ WAVE_PRESETS = {
             "0A0A0A0A00000000",
         ],
     },
-    "storm": {
-        "name": "风暴",
-        "description": "高频持续输出",
+    "heartbeat": {
+        "name": "心跳",
+        "description": "双拍心跳节奏（lub-dub）",
         "data": [
-            "0505050564646464",
-            "0505050564646464",
-            "0505050564646464",
-            "0505050564646464",
-            "0505050564646464",
-            "0505050564646464",
-            "0505050564646464",
-            "0505050564646464",
-            "0505050564646464",
-            "0505050564646464",
+            "0A0A0A0A64646464",
+            "0A0A0A0A14141414",
+            "0A0A0A0A46464646",
+            "0A0A0A0A00000000",
+            "0A0A0A0A00000000",
+            "0A0A0A0A00000000",
+            "0A0A0A0A00000000",
+            "0A0A0A0A00000000",
+            "0A0A0A0A00000000",
+            "0A0A0A0A00000000",
+            "0A0A0A0A00000000",
+            "0A0A0A0A00000000",
+            "0A0A0A0A00000000",
+            "0A0A0A0A00000000",
+            "0A0A0A0A00000000",
+        ],
+    },
+    "needle": {
+        "name": "针刺",
+        "description": "高频持续尖刺（针扎感）",
+        "data": [
+            "8C8C8C8C64646464",
+            "8C8C8C8C64646464",
+            "8C8C8C8C1E1E1E1E",
+            "8C8C8C8C64646464",
+            "8C8C8C8C64646464",
+            "8C8C8C8C00000000",
+            "8C8C8C8C64646464",
+            "8C8C8C8C64646464",
+            "8C8C8C8C32323232",
+            "8C8C8C8C64646464",
+        ],
+    },
+    "throb": {
+        "name": "律动",
+        "description": "低频缓慢起伏（厚重深沉）",
+        "data": [
+            "0A0A0A0A14141414",
+            "0A0A0A0A1E1E1E1E",
+            "0A0A0A0A28282828",
+            "0A0A0A0A37373737",
+            "0A0A0A0A46464646",
+            "0A0A0A0A55555555",
+            "0A0A0A0A5F5F5F5F",
+            "0A0A0A0A64646464",
+            "0A0A0A0A5F5F5F5F",
+            "0A0A0A0A55555555",
+            "0A0A0A0A46464646",
+            "0A0A0A0A37373737",
+            "0A0A0A0A28282828",
+            "0A0A0A0A1E1E1E1E",
+            "0A0A0A0A14141414",
+        ],
+    },
+    "chaos": {
+        "name": "混乱",
+        "description": "强弱频率随机交替（不可预测）",
+        "data": [
+            "0A0A0A0A28282828",
+            "8C8C8C8C64646464",
+            "0A0A0A0A64646464",
+            "8C8C8C8C64646464",
+            "8C8C8C8C0F0F0F0F",
+            "8C8C8C8C28282828",
+            "8C8C8C8C00000000",
+            "4646464664646464",
+            "0A0A0A0A28282828",
+            "4646464664646464",
+            "8C8C8C8C64646464",
+            "4646464628282828",
         ],
     },
 }
@@ -141,36 +206,38 @@ class DGLabCommandHandler:
 
     HELP_TEXT = """🔌 DG-LAB 设备管理 使用说明（别名：/电击）
 
-📌 设备绑定管理
-  /dglab bind [服务器地址]   绑定设备（显示二维码）
-  /dglab unbind             解绑当前设备
+📌 设备绑定管理（支持多设备）
+  /dglab bind [服务器地址]   绑定新设备（显示二维码）
+  /dglab unbind [序号]       解绑设备（多台时需指定序号）
   中文：/电击 绑定 / /电击 解绑
 
 📌 强度控制 (范围: 0-200)
-  /dglab strength <A|B> <值>  设置通道强度
-  /dglab up <A|B> [步进]     增加强度（默认+5）
-  /dglab down <A|B> [步进]    减少强度（默认-5）
+  /dglab strength [序号] <A|B> <值>  设置通道强度
+  /dglab up [序号] <A|B> [步进]      增加强度（默认+5）
+  /dglab down [序号] <A|B> [步进]    减少强度（默认-5）
   中文：/电击 强度 / /电击 增加 / /电击 减少
+  注：序号省略时默认操作 #1 设备；多设备时用序号指定，如 /电击 强度 2 A 50
 
 📌 波形控制
-  /dglab pulse <A|B> <预设名> [秒数]  发送波形（默认5秒）
-  /dglab pulse <A|B> <HEX数据> [秒数] 发送自定义波形
+  /dglab pulse [序号] <A|B> <预设名> [秒数]  发送波形（默认5秒）
+  /dglab pulse [序号] <A|B> <HEX数据> [秒数] 发送自定义波形
   中文：/电击 波形 A breathe 10
-  可用预设: breathe(呼吸), pulse(脉冲), wave(波浪), tap(敲击), storm(风暴)
+  可用预设: breathe(呼吸), pulse(脉冲), wave(波浪), tap(敲击),
+           heartbeat(心跳), needle(针刺), throb(律动), chaos(混乱)
 
 📌 电击启停
-  /dglab shock <A|B> [强度] [波形] [秒数]  开始电击
-  /dglab stop [A|B]          停止电击（不指定则停止全部）
-  /dglab clear <A|B>         清空波形队列
+  /dglab shock [序号] <A|B> [强度] [波形] [秒数]  开始电击
+  /dglab stop [序号] [A|B]   停止电击（不指定通道则停止该设备全部）
+  /dglab clear [序号] <A|B>  清空波形队列
   中文：/电击 开始 / /电击 停止 / /电击 清空
 
 📌 状态与反馈
-  /dglab status              查看绑定和连接状态
-  /dglab info                查看详细设备信息
-  /dglab feedback            查看设备实时强度和反馈
+  /dglab status              查看全部设备的绑定和连接状态
+  /dglab info                查看全部设备的详细信息
+  /dglab feedback [序号]     查看设备实时强度和反馈
   中文：/电击 状态 / /电击 信息 / /电击 反馈
 
-📌 权限管理
+📌 权限管理（user级：控制该用户全部设备）
   /dglab permission          查看权限隔离状态
   /dglab permission off      关闭隔离（允许他人操控你的设备）
   /dglab permission on       开启隔离（仅本人可控，默认）
@@ -179,13 +246,13 @@ class DGLabCommandHandler:
 ⚠️ 注意事项
   • 强度值范围: 0-200，请根据个人耐受度调整
   • A/B通道分别对应不同的脉冲输出
-  • 绑定后可保持长时间在线，超时自动断开
-  • 操控他人设备: /dglab strength @用户ID A 50
+  • 同一用户可绑定多台设备，用序号(1/2/3...)区分
+  • 操控他人设备: /dglab strength @用户ID 2 A 50
   • 如遇问题发送 /dglab help 查看帮助
 
 💡 提示: 所有子命令均支持中文，如 /电击 绑定、/电击 强度 A 50 等
    默认开启权限隔离，仅本人可控制自己的设备
-   使用 /dglab permission off 可允许他人操控"""
+   单设备用户无需关心序号，行为与单设备时完全一致"""
 
     def __init__(self, connection_pool, device_store, default_server_url: str = ""):
         self._pool = connection_pool
@@ -317,27 +384,34 @@ class DGLabCommandHandler:
         user_specified_url = bool(server_url)
 
         if not server_url:
-            binding = self._store.get_binding(user_id)
-            if binding and binding.server_url:
-                server_url = binding.server_url
-                logger.info(f"[DGLab] 使用上次绑定的服务器地址: {server_url}")
-            elif self._default_server_url:
+            # 未显式指定地址时的回退优先级：
+            #   1. 配置项 dglab_server_url（管理员维护的权威地址，通常为公网 wss，最可靠）
+            #   2. 该用户已有设备的 server_url（可能过期或指向不可达地址，仅作兜底）
+            #   3. 任意其他用户绑定记录中的 server_url（最后兜底）
+            if self._default_server_url:
                 server_url = self._default_server_url
                 logger.info(f"[DGLab] 使用配置文件默认服务器地址: {server_url}")
             else:
-                all_bindings = self._store.list_all_bindings()
-                for other_binding in all_bindings.values():
-                    if other_binding.server_url:
-                        server_url = other_binding.server_url
-                        logger.info(
-                            f"[DGLab] 使用已有绑定记录中的服务器地址: {server_url}"
-                        )
-                        break
-                if not server_url:
-                    raise DGLabCommandError(
-                        "未指定服务器地址",
-                        suggestion="用法: /dglab bind ws://服务器地址:端口",
+                my_devices = self._store.list_devices(user_id)
+                if my_devices and my_devices[0].server_url:
+                    server_url = my_devices[0].server_url
+                    logger.info(
+                        f"[DGLab] 未配置默认地址，使用已有设备的服务器地址: {server_url}"
                     )
+                else:
+                    # 任意其他用户的任一设备地址
+                    for _uid, _did, other_binding in self._store.iter_all_device_bindings():
+                        if other_binding.server_url:
+                            server_url = other_binding.server_url
+                            logger.info(
+                                f"[DGLab] 使用已有绑定记录中的服务器地址: {server_url}"
+                            )
+                            break
+                    if not server_url:
+                        raise DGLabCommandError(
+                            "未指定服务器地址",
+                            suggestion="用法: /dglab bind ws://服务器地址:端口",
+                        )
 
         if not re.match(r"^wss?://[\w\.-]+(:\d+)?(/.*)?$", server_url):
             raise DGLabCommandError(
@@ -345,14 +419,14 @@ class DGLabCommandHandler:
                 suggestion="正确格式: ws://host:port 或 wss://host:port（端口可省略）",
             )
 
-        existing_binding = self._store.get_binding(user_id)
-        if existing_binding:
-            await self._pool.close_user_connection(user_id)
-            logger.info(f"[DGLab] 用户 {user_id} 重新绑定，关闭旧连接")
+        # 多设备：追加新设备，不关闭已有设备连接
+        device_index = self._store.next_device_index(user_id)
+        device_id = uuid.uuid4().hex
 
         try:
             client, status = await self._pool.get_or_create_connection(
                 user_id=user_id,
+                device_id=device_id,
                 server_url=server_url,
             )
         except DGLabCommandError:
@@ -380,6 +454,8 @@ class DGLabCommandHandler:
         now = datetime.now().isoformat()
         binding = DeviceBinding(
             user_id=user_id,
+            device_id=device_id,
+            device_index=device_index,
             client_id=state.client_id,
             target_id="",
             server_url=server_url,
@@ -387,23 +463,27 @@ class DGLabCommandHandler:
             last_active=now,
             nickname=user_name,
         )
-        self._store.set_binding(binding)
+        self._store.add_binding(binding)
 
-        qr_img_path = self._generate_qr_image(qr_content, user_id)
+        qr_img_path = self._generate_qr_image(qr_content, user_id, device_index)
 
         response_parts = [
-            f"🔗 DG-LAB 设备绑定",
+            f"🔗 DG-LAB 设备绑定 #{device_index}",
             f"",
             f"👤 用户: {user_name}",
         ]
         if user_specified_url:
             response_parts.append(f"🖥️  服务器: {server_url}")
+        existing_count = self._store.device_count(user_id)
+        if existing_count > 1:
+            response_parts.append(f"📦 当前已绑定 {existing_count} 台设备")
         response_parts += [
             f"🆔 客户端ID: {state.client_id[:8]}...",
             f"",
             f"📱 请使用 DG-LAB APP 扫描下方二维码完成绑定",
             f"⏳ 等待APP扫码绑定中...",
             f"💡 扫码后使用 /dglab status 确认连接状态",
+            f"💡 控制该设备: /dglab strength {device_index} A 50",
         ]
 
         return [
@@ -411,8 +491,10 @@ class DGLabCommandHandler:
             event.image_result(qr_img_path),
         ]
 
-    def _generate_qr_image(self, qr_content: str, user_id: str) -> str:
-        """将二维码内容生成为图片文件，返回文件路径"""
+    def _generate_qr_image(
+        self, qr_content: str, user_id: str, device_index: int = 1
+    ) -> str:
+        """将二维码内容生成为图片文件，返回文件路径。每台设备独立文件名。"""
         qr_dir = os.path.join("data", "dglab_qrcodes")
         os.makedirs(qr_dir, exist_ok=True)
 
@@ -427,7 +509,7 @@ class DGLabCommandHandler:
 
         img = qr.make_image(fill_color="black", back_color="white")
 
-        file_path = os.path.join(qr_dir, f"qr_{user_id}.png")
+        file_path = os.path.join(qr_dir, f"qr_{user_id}_{device_index}.png")
         img.save(file_path)
         logger.info(f"[DGLab] 二维码图片已生成: {file_path}")
 
@@ -477,30 +559,76 @@ class DGLabCommandHandler:
     async def _cmd_unbind(
         self, args: str, user_id: str, user_name: str, event: AstrMessageEvent
     ) -> str:
-        """解绑设备命令"""
-        binding = self._store.get_binding(user_id)
-        if not binding:
+        """解绑设备命令: /dglab unbind [序号]
+
+        - 指定序号: 解绑该设备
+        - 无序号且仅 1 台: 解绑之
+        - 无序号且多台: 提示列出序号让用户选择
+        """
+        devices = self._store.list_devices(user_id)
+        if not devices:
             raise DGLabCommandError("当前未绑定任何设备", suggestion="无需解绑")
 
-        await self._pool.close_user_connection(user_id)
-        self._store.remove_binding(user_id)
+        arg = args.strip()
+        if arg:
+            device_index, _ = self._parse_device_index(arg)
+            if device_index is None:
+                raise DGLabCommandError(
+                    f"无效的设备序号: {arg}",
+                    suggestion="用法: /dglab unbind 2（解绑 #2 设备）",
+                )
+            target = next(
+                (b for b in devices if b.device_index == device_index), None
+            )
+            if not target:
+                avail = ", ".join(f"#{b.device_index}" for b in devices)
+                raise DGLabCommandError(
+                    f"设备序号 #{device_index} 不存在（你有: {avail}）",
+                    suggestion="使用 /dglab status 查看全部设备",
+                )
+            await self._pool.close_device_connection(user_id, target.device_id)
+            self._store.remove_device(user_id, target.device_id)
+            remaining = self._store.device_count(user_id)
+            return (
+                f"✅ 设备 #{device_index} 已解绑\n"
+                f"👤 用户: {user_name}\n"
+                f"📦 剩余 {remaining} 台设备\n"
+                f"💡 可随时使用 /dglab bind 重新绑定"
+            )
 
-        return (
-            f"✅ 设备解绑成功\n"
-            f"👤 用户: {user_name}\n"
-            f"🕐 解绑时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-            f"💡 可随时使用 /dglab bind 重新绑定"
+        # 无序号
+        if len(devices) == 1:
+            b = devices[0]
+            await self._pool.close_device_connection(user_id, b.device_id)
+            self._store.remove_device(user_id, b.device_id)
+            return (
+                f"✅ 设备已解绑\n"
+                f"👤 用户: {user_name}\n"
+                f"🕐 解绑时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"💡 可随时使用 /dglab bind 重新绑定"
+            )
+
+        # 多台设备，必须指定序号
+        avail = "\n".join(
+            f"  • #{b.device_index} — {b.server_url} "
+            f"({'已绑定' if b.target_id else '等待扫码'})"
+            for b in devices
+        )
+        raise DGLabCommandError(
+            f"你有 {len(devices)} 台设备，请指定要解绑的序号：\n{avail}",
+            suggestion="用法: /dglab unbind 2",
         )
 
     async def _cmd_strength(
         self, args: str, user_id: str, user_name: str, event: AstrMessageEvent
     ) -> str:
-        """设置强度命令: /dglab strength [@user] <A|B> <0-200>"""
-        target_id, remaining = self._resolve_target(args, user_id)
+        """设置强度命令: /dglab strength [@user] [序号] <A|B> <0-200>"""
+        target_id, device_id, remaining = self._resolve_target(args, user_id)
         channel, value = self._parse_strength_args(remaining)
 
         result = await self._pool.send_strength_command(
             user_id=target_id,
+            device_id=device_id,
             channel=channel,
             mode=2,
             value=value,
@@ -511,12 +639,13 @@ class DGLabCommandHandler:
     async def _cmd_strength_up(
         self, args: str, user_id: str, user_name: str, event: AstrMessageEvent
     ) -> str:
-        """增加强度命令: /dglab up [@user] <A|B> [step]"""
-        target_id, remaining = self._resolve_target(args, user_id)
+        """增加强度命令: /dglab up [@user] [序号] <A|B> [step]"""
+        target_id, device_id, remaining = self._resolve_target(args, user_id)
         channel, step = self._parse_strength_adjust_args(remaining, default_step=5)
 
         result = await self._pool.send_strength_command(
             user_id=target_id,
+            device_id=device_id,
             channel=channel,
             mode=1,
             value=step,
@@ -527,12 +656,13 @@ class DGLabCommandHandler:
     async def _cmd_strength_down(
         self, args: str, user_id: str, user_name: str, event: AstrMessageEvent
     ) -> str:
-        """减少强度命令: /dglab down [@user] <A|B> [step]"""
-        target_id, remaining = self._resolve_target(args, user_id)
+        """减少强度命令: /dglab down [@user] [序号] <A|B> [step]"""
+        target_id, device_id, remaining = self._resolve_target(args, user_id)
         channel, step = self._parse_strength_adjust_args(remaining, default_step=5)
 
         result = await self._pool.send_strength_command(
             user_id=target_id,
+            device_id=device_id,
             channel=channel,
             mode=0,
             value=step,
@@ -543,8 +673,8 @@ class DGLabCommandHandler:
     async def _cmd_shock(
         self, args: str, user_id: str, user_name: str, event: AstrMessageEvent
     ) -> str:
-        """开始电击: /dglab shock [@user] <A|B> [强度] [波形预设] [秒数]"""
-        target_id, remaining = self._resolve_target(args, user_id)
+        """开始电击: /dglab shock [@user] [序号] <A|B> [强度] [波形预设] [秒数]"""
+        target_id, device_id, remaining = self._resolve_target(args, user_id)
         parts = remaining.strip().split()
 
         if len(parts) < 1:
@@ -583,14 +713,14 @@ class DGLabCommandHandler:
         if idx < len(parts):
             try:
                 duration = int(parts[idx])
-                if not (1 <= duration <= 30):
+                if not (1 <= duration <= 60):
                     raise DGLabCommandError(
-                        "持续时间超出范围", suggestion="持续时间范围: 1-30 秒"
+                        "持续时间超出范围", suggestion="持续时间范围: 1-60 秒"
                     )
             except ValueError:
                 raise DGLabCommandError(
                     f"持续时间必须是数字: {parts[idx]}",
-                    suggestion="持续时间范围: 1-30 秒",
+                    suggestion="持续时间范围: 1-60 秒",
                 )
 
         pulse_data = WAVE_PRESETS[preset_name_key]["data"]
@@ -604,6 +734,7 @@ class DGLabCommandHandler:
         # 设置强度
         await self._pool.send_strength_command(
             user_id=target_id,
+            device_id=device_id,
             channel=channel,
             mode=2,
             value=strength,
@@ -611,6 +742,7 @@ class DGLabCommandHandler:
         # 发送波形
         await self._pool.send_pulse_command(
             user_id=target_id,
+            device_id=device_id,
             channel=channel_letter,
             pulse_data=pulse_data,
             duration=duration,
@@ -625,27 +757,27 @@ class DGLabCommandHandler:
     async def _cmd_stop(
         self, args: str, user_id: str, user_name: str, event: AstrMessageEvent
     ) -> str:
-        """停止输出命令: /dglab stop [@user] [A|B]"""
-        target_id, remaining = self._resolve_target(args, user_id)
+        """停止输出命令: /dglab stop [@user] [序号] [A|B]"""
+        target_id, device_id, remaining = self._resolve_target(args, user_id)
         channel_str = remaining.strip().upper()
 
         if not channel_str:
-            result = await self._pool.stop_all(target_id)
+            result = await self._pool.stop_all(target_id, device_id)
             return f"🛑 已停止所有输出\n{result}"
 
         channel = self._parse_channel(channel_str)
         await self._pool.send_strength_command(
-            user_id=target_id, channel=channel, mode=2, value=0
+            user_id=target_id, device_id=device_id, channel=channel, mode=2, value=0
         )
-        await self._pool.clear_channel(target_id, channel)
+        await self._pool.clear_channel(target_id, device_id, channel)
         channel_name = {1: "A", 2: "B"}[channel]
         return f"🛑 已停止{channel_name}通道输出（强度归零 + 清空波形）"
 
     async def _cmd_clear(
         self, args: str, user_id: str, user_name: str, event: AstrMessageEvent
     ) -> str:
-        """清空波形队列: /dglab clear [@user] <A|B>"""
-        target_id, remaining = self._resolve_target(args, user_id)
+        """清空波形队列: /dglab clear [@user] [序号] <A|B>"""
+        target_id, device_id, remaining = self._resolve_target(args, user_id)
         channel_str = remaining.strip().upper()
         if not channel_str:
             raise DGLabCommandError(
@@ -653,14 +785,14 @@ class DGLabCommandHandler:
             )
 
         channel = self._parse_channel(channel_str)
-        result = await self._pool.clear_channel(target_id, channel)
+        result = await self._pool.clear_channel(target_id, device_id, channel)
         return result
 
     async def _cmd_pulse(
         self, args: str, user_id: str, user_name: str, event: AstrMessageEvent
     ) -> str:
-        """发送波形: /dglab pulse [@user] <A|B> <预设名|HEX数据> [持续秒数]"""
-        target_id, remaining = self._resolve_target(args, user_id)
+        """发送波形: /dglab pulse [@user] [序号] <A|B> <预设名|HEX数据> [持续秒数]"""
+        target_id, device_id, remaining = self._resolve_target(args, user_id)
         parts = remaining.strip().split()
 
         if len(parts) < 2:
@@ -683,14 +815,14 @@ class DGLabCommandHandler:
         if len(parts) >= 3:
             try:
                 duration = int(parts[2])
-                if not (1 <= duration <= 30):
+                if not (1 <= duration <= 60):
                     raise DGLabCommandError(
-                        "持续时间超出范围", suggestion="持续时间范围: 1-30 秒"
+                        "持续时间超出范围", suggestion="持续时间范围: 1-60 秒"
                     )
             except ValueError:
                 raise DGLabCommandError(
                     f"持续时间必须是数字: {parts[2]}",
-                    suggestion="持续时间范围: 1-30 秒",
+                    suggestion="持续时间范围: 1-60 秒",
                 )
 
         if preset_or_hex in WAVE_PRESETS:
@@ -710,6 +842,7 @@ class DGLabCommandHandler:
 
         result = await self._pool.send_pulse_command(
             user_id=target_id,
+            device_id=device_id,
             channel=channel_letter,
             pulse_data=pulse_data,
             duration=duration,
@@ -719,10 +852,10 @@ class DGLabCommandHandler:
     async def _cmd_feedback(
         self, args: str, user_id: str, user_name: str, event: AstrMessageEvent
     ) -> str:
-        """查看设备实时反馈: /dglab feedback [@user]"""
-        target_id, _ = self._resolve_target(args, user_id)
+        """查看设备实时反馈: /dglab feedback [@user] [序号]"""
+        target_id, device_id, _ = self._resolve_target(args, user_id)
 
-        feedback = self._pool.get_strength_feedback(target_id)
+        feedback = self._pool.get_strength_feedback(target_id, device_id)
         if not feedback:
             raise DGLabCommandError(
                 "无法获取设备反馈", suggestion="请确认设备已绑定且在线"
@@ -752,29 +885,37 @@ class DGLabCommandHandler:
     async def _cmd_status(
         self, args: str, user_id: str, user_name: str, event: AstrMessageEvent
     ) -> str:
-        """查看状态命令"""
-        binding = self._store.get_binding(user_id)
-        conn_status = self._pool.get_connection_status(user_id)
-        status_info = self._pool.get_user_status_info(user_id)
+        """查看状态命令（列出全部设备）"""
+        devices = self._store.list_devices(user_id)
 
-        parts = ["📊 DG-LAB 设备状态"]
+        parts = [f"📊 DG-LAB 设备状态（共 {len(devices)} 台）"]
 
-        if binding:
-            bound_time = datetime.fromisoformat(binding.bound_time).strftime(
-                "%Y-%m-%d %H:%M"
+        if not devices:
+            parts.extend(
+                [
+                    "",
+                    "❌ 未绑定设备",
+                    "",
+                    "💡 使用 /dglab bind <服务器地址> 进行绑定",
+                ]
             )
-            last_active = datetime.fromisoformat(binding.last_active).strftime(
-                "%Y-%m-%d %H:%M:%S"
-            )
+            active_count = self._pool.get_active_count()
+            parts.append(f"\n📈 系统活跃连接数: {active_count}")
+            return "\n".join(parts)
+
+        for b in devices:
+            conn_status = self._pool.get_connection_status(user_id, b.device_id)
+            status_info = self._pool.get_user_status_info(user_id, b.device_id)
+            bound_time = datetime.fromisoformat(b.bound_time).strftime("%Y-%m-%d %H:%M")
 
             parts.extend(
                 [
                     "",
-                    f"🔗 绑定状态: {'✅ 已绑定' if binding.target_id else '⏳ 等待扫码'}",
-                    f"🖥️  服务器: {binding.server_url}",
-                    f"🆔 客户端ID: {binding.client_id[:12]}...",
+                    f"━━━ 设备 #{b.device_index} ━━━",
+                    f"🔗 绑定状态: {'✅ 已绑定' if b.target_id else '⏳ 等待扫码'}",
+                    f"🖥️  服务器: {b.server_url}",
+                    f"🆔 客户端ID: {b.client_id[:12]}...",
                     f"🕐 绑定时间: {bound_time}",
-                    f"🔄 最后活跃: {last_active}",
                 ]
             )
 
@@ -785,77 +926,78 @@ class DGLabCommandHandler:
                     "error": "🔴",
                     "disconnected": "⚫",
                 }.get(conn_status.value, "❓")
-
                 parts.append(f"📡 连接状态: {status_emoji} {conn_status.value}")
-
                 if status_info:
                     parts.append(
-                        f"⏱️  连接时长: {status_info.get('connected_seconds', 0)}秒"
+                        f"⏱️  连接时长: {status_info.get('connected_seconds', 0)}秒 "
+                        f"| 空闲: {status_info.get('idle_seconds', 0)}秒"
                     )
-                    parts.append(f"😴 空闲时长: {status_info.get('idle_seconds', 0)}秒")
-        else:
-            parts.extend(
-                [
-                    "",
-                    "❌ 未绑定设备",
-                    "",
-                    "💡 使用 /dglab bind <服务器地址> 进行绑定",
-                ]
-            )
 
+        parts.append(f"\n💡 控制指定设备: /dglab strength 2 A 50")
         active_count = self._pool.get_active_count()
-        parts.append(f"\n📈 系统活跃连接数: {active_count}")
+        parts.append(f"📈 系统活跃连接数: {active_count}")
 
         return "\n".join(parts)
 
     async def _cmd_info(
         self, args: str, user_id: str, user_name: str, event: AstrMessageEvent
     ) -> str:
-        """查看详细信息命令"""
-        binding = self._store.get_binding(user_id)
-        status_info = self._pool.get_user_status_info(user_id)
+        """查看详细信息命令（列出全部设备）"""
+        devices = self._store.list_devices(user_id)
 
-        if not binding and not status_info:
+        if not devices:
             raise DGLabCommandError(
                 "无设备信息", suggestion="请先使用 /dglab bind 绑定设备"
             )
 
-        parts = ["🔍 DG-LAB 详细信息", ""]
+        parts = [f"🔍 DG-LAB 详细信息（共 {len(devices)} 台设备）", ""]
 
-        if binding:
+        for b in devices:
+            status_info = self._pool.get_user_status_info(user_id, b.device_id)
             parts.extend(
                 [
+                    f"━━━ 设备 #{b.device_index} ━━━",
                     f"=== 绑定信息 ===",
-                    f"用户ID: {binding.user_id}",
-                    f"昵称: {binding.nickname or '未设置'}",
-                    f"客户端ID: {binding.client_id}",
-                    f"目标ID: {binding.target_id or '(等待绑定)'}",
-                    f"服务器: {binding.server_url}",
-                    f"绑定时间: {binding.bound_time}",
-                    f"最后活跃: {binding.last_active}",
+                    f"用户ID: {b.user_id}",
+                    f"设备ID: {b.device_id}",
+                    f"昵称: {b.nickname or '未设置'}",
+                    f"客户端ID: {b.client_id}",
+                    f"目标ID: {b.target_id or '(等待绑定)'}",
+                    f"服务器: {b.server_url}",
+                    f"绑定时间: {b.bound_time}",
+                    f"最后活跃: {b.last_active}",
                     "",
                 ]
             )
-
-        if status_info:
-            parts.extend(
-                [
-                    f"=== 连接信息 ===",
-                    f"状态: {status_info.get('status', '未知')}",
-                    f"已绑定: {'是' if status_info.get('is_bound', False) else '否'}",
-                    f"连接时长: {status_info.get('connected_seconds', 0)}秒 ({status_info.get('connected_seconds', 0) // 60}分钟)",
-                    f"空闲时长: {status_info.get('idle_seconds', 0)}秒",
-                    f"错误次数: {status_info.get('error_count', 0)}",
-                ]
-            )
+            if status_info:
+                secs = status_info.get('connected_seconds', 0)
+                parts.extend(
+                    [
+                        f"=== 连接信息 ===",
+                        f"状态: {status_info.get('status', '未知')}",
+                        f"已绑定: {'是' if status_info.get('is_bound', False) else '否'}",
+                        f"连接时长: {secs}秒 ({secs // 60}分钟)",
+                        f"空闲时长: {status_info.get('idle_seconds', 0)}秒",
+                        f"错误次数: {status_info.get('error_count', 0)}",
+                        "",
+                    ]
+                )
 
         return "\n".join(parts)
 
     def _resolve_target(self, args: str, caller_id: str) -> tuple:
-        """解析操控目标用户，返回 (target_user_id, remaining_args)。
+        """解析操控目标，返回 (target_user_id, device_id, remaining_args)。
 
-        如果 args 以 @user_id 开头，则尝试操控该用户的设备（需权限检查）。
-        否则操控自己的设备。
+        解析顺序：
+          1. 若 args 以 @user_id 开头，则操控该用户（跨用户，需权限检查）
+          2. 从剩余参数开头剥离可选的设备序号（1-99 的纯数字），无则默认 #1
+          3. 剩余部分交给具体命令解析（通道/强度等）
+
+        支持的组合：
+          "/电击 强度 2 A 50"          → 自己的 #2 设备
+          "/电击 强度 A 50"            → 自己的 #1 设备（默认）
+          "/电击 强度 @张三 2 A 50"    → 张三的 #2 设备
+          "/电击 强度 @张三 A 50"      → 张三的 #1 设备
         """
         stripped = args.strip()
         target_id = caller_id
@@ -867,27 +1009,66 @@ class DGLabCommandHandler:
             target_id = parts[0][1:]  # 去掉 @ 前缀
             remaining = parts[1] if len(parts) > 1 else ""
 
+        # 从剩余参数开头剥离可选设备序号
+        device_index, remaining = self._parse_device_index(remaining)
+
         if target_id == caller_id:
             # 操控自己的设备，无需权限检查
-            binding = self._store.get_binding(caller_id)
-            if not binding:
+            devices = self._store.list_devices(caller_id)
+            if not devices:
                 raise DGLabCommandError(
                     "你尚未绑定设备", suggestion="请先使用 /dglab bind 绑定设备"
                 )
-            return target_id, remaining
+            binding = self._pick_device(devices, device_index)
+            return target_id, binding.device_id, remaining
 
-        # 操控他人设备，检查权限
-        binding = self._store.get_binding(target_id)
-        if not binding:
+        # 操控他人设备，检查权限（QQ 级：shared 控制该用户全部设备）
+        devices = self._store.list_devices(target_id)
+        if not devices:
             raise DGLabCommandError(
                 f"目标用户 {target_id} 未绑定设备", suggestion="该用户需要先绑定设备"
             )
-        if not binding.shared:
+        first = devices[0]
+        if not first.shared:
             raise DGLabCommandError(
                 "权限不足，该用户已开启权限隔离",
                 suggestion="目标用户需先执行 /dglab permission off 允许他人操控",
             )
-        return target_id, remaining
+        binding = self._pick_device(devices, device_index)
+        return target_id, binding.device_id, remaining
+
+    def _parse_device_index(self, remaining: str) -> tuple:
+        """从参数开头解析可选的设备序号（1-99 纯数字）。
+
+        返回 (device_index_or_None, remaining)。
+        注意：必须区分“数字是设备序号”还是“数字是强度值”。
+        约定：紧跟在命令动词后、且在通道(A/B)之前的第一个纯数字 token 视为设备序号。
+        若下一个 token 是通道 A/B，则当前数字不是序号（如 "A 50" 中的 50）。
+        """
+        parts = remaining.strip().split(None, 1)
+        if not parts:
+            return None, remaining
+        first = parts[0]
+        # 纯数字且范围合理
+        if first.isdigit() and 1 <= int(first) <= 99:
+            # 设备序号只会在通道参数之前出现；若它本身就是唯一参数（无后续），
+            # 或后续是通道/其他参数，都视为序号
+            return int(first), parts[1] if len(parts) > 1 else ""
+        return None, remaining
+
+    @staticmethod
+    def _pick_device(devices: List[DeviceBinding], device_index):
+        """按序号选取设备；序号为 None 或越界时回退到 #1 并给出提示性错误。"""
+        if device_index is None:
+            return devices[0]
+        for b in devices:
+            if b.device_index == device_index:
+                return b
+        avail = ", ".join(f"#{b.device_index}" for b in devices)
+        raise DGLabCommandError(
+            f"设备序号 #{device_index} 不存在（你有 {len(devices)} 台设备: {avail}）",
+            suggestion="使用 /dglab status 查看全部设备",
+        )
 
     def _extract_user_id(self, event: AstrMessageEvent) -> str:
         """提取用户唯一标识"""

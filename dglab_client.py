@@ -328,8 +328,7 @@ class DGLabClient:
                 self.state.bound = False
                 self._server_ack.set()
             elif msg == "200":
-                self.state.target_id = tid
-                self.state.bound = True
+                self._mark_bound(tid, via="bind/200")
             elif msg in ("400", "401"):
                 self.state.bound = False
                 self.state.last_error = f"bind {msg}"
@@ -339,12 +338,42 @@ class DGLabClient:
             self.state.last_error = f"break {msg}"
         elif t == "error":
             self.state.last_error = f"error {msg}"
+        elif t == "heartbeat":
+            # 兼容性关键: 部分(非完全符合协议文档的)中转服务器在 APP 扫码配对成功后,
+            # 不会向前端下发 bind/"200", 而是通过周期性心跳(已填充 targetId)来隐式
+            # 告知绑定关系。若心跳带上了非空 targetId, 则视为绑定成功。
+            # 协议规范的中转服务器仍会走上面的 bind/"200" 分支, 此处仅作兜底。
+            if tid:
+                self._mark_bound(tid, via="heartbeat")
+        # 任意带 targetId 的消息(如 msg 回传)同样可作为绑定凭证的二次确认
+        if tid and not self.state.bound:
+            self._mark_bound(tid, via=t or "message")
         # heartbeat / msg 交给上层回调
         if self.state.on_message:
             try:
                 await self.state.on_message(data)
             except Exception:
                 pass
+
+    def _mark_bound(self, target_id: str, via: str = "") -> None:
+        """记录绑定成功状态。
+
+        不同中转服务器实现下发绑定凭证的时机不同:
+          - 规范实现: APP 配对后立即向前端下发 bind/"200"
+          - 部分实现: 仅在周期性心跳中携带 targetId
+        统一在此处处理, 避免重复日志与回调。
+        """
+        if not target_id:
+            return
+        was_unbound = not self.state.bound
+        self.state.target_id = target_id
+        self.state.bound = True
+        self.state.last_error = ""
+        if was_unbound:
+            logger.info(
+                f"[DGLab] 检测到 APP 绑定 (via {via}), "
+                f"targetId={target_id[:8]}..."
+            )
 
     async def _heartbeat_loop(self):
         """定期发送心跳，连接断开或被取消时退出。"""

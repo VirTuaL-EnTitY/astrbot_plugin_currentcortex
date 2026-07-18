@@ -89,10 +89,10 @@ class DGLabWebUI:
             r.add_post("/api/posts/{post_id}/delete", self._handle_delete_post)
             r.add_get("/api/user/{username}", self._handle_user_public)
             r.add_get("/api/devices", self._handle_list_devices)
-            r.add_get("/api/device/{user_id}/status", self._handle_device_status)
-            r.add_post("/api/device/{user_id}/strength", self._handle_set_strength)
-            r.add_post("/api/device/{user_id}/pulse", self._handle_send_pulse)
-            r.add_post("/api/device/{user_id}/stop", self._handle_stop)
+            r.add_get("/api/device/{user_id}/{device_id}/status", self._handle_device_status)
+            r.add_post("/api/device/{user_id}/{device_id}/strength", self._handle_set_strength)
+            r.add_post("/api/device/{user_id}/{device_id}/pulse", self._handle_send_pulse)
+            r.add_post("/api/device/{user_id}/{device_id}/stop", self._handle_stop)
             r.add_get("/api/plaza", self._handle_plaza)
             r.add_post("/api/plaza/request", self._handle_plaza_request)
             r.add_get("/api/requests/pending", self._handle_pending_requests)
@@ -301,6 +301,23 @@ class DGLabWebUI:
             }
         )
 
+    def _build_device_card(self, user_id: str, binding) -> dict:
+        """根据 DeviceBinding 构建一张设备卡片的字典（含实时状态/反馈）。"""
+        status_info = self._pool.get_user_status_info(user_id, binding.device_id)
+        feedback = self._pool.get_strength_feedback(user_id, binding.device_id)
+        return {
+            "user_id": user_id,
+            "device_id": binding.device_id,
+            "device_index": binding.device_index,
+            "server_url": binding.server_url,
+            "status": status_info["status"] if status_info else "disconnected",
+            "is_bound": status_info["is_bound"] if status_info else False,
+            "strength_a": feedback["strength_a"] if feedback else 0,
+            "strength_b": feedback["strength_b"] if feedback else 0,
+            "limit_a": feedback["limit_a"] if feedback else 200,
+            "limit_b": feedback["limit_b"] if feedback else 200,
+        }
+
     async def _handle_list_devices(self, request: web.Request) -> web.Response:
         username = self._auth_user(request)
         if not username:
@@ -309,50 +326,23 @@ class DGLabWebUI:
         if not user:
             return web.json_response({"error": "用户不存在"}, status=404)
 
-        bindings = self._store.list_all_bindings()
         my_devices = []
-        for user_id, b in bindings.items():
+        # 自己的设备：按设备展开（一人多台 → 多张卡）
+        for user_id, device_id, b in self._store.iter_all_device_bindings():
             if user_id == user.qq:
-                status_info = self._pool.get_user_status_info(user_id)
-                feedback = self._pool.get_strength_feedback(user_id)
-                my_devices.append(
-                    {
-                        "user_id": user_id,
-                        "server_url": b.server_url,
-                        "status": status_info["status"]
-                        if status_info
-                        else "disconnected",
-                        "is_bound": status_info["is_bound"] if status_info else False,
-                        "strength_a": feedback["strength_a"] if feedback else 0,
-                        "strength_b": feedback["strength_b"] if feedback else 0,
-                        "limit_a": feedback["limit_a"] if feedback else 200,
-                        "limit_b": feedback["limit_b"] if feedback else 200,
-                    }
-                )
+                my_devices.append(self._build_device_card(user_id, b))
 
+        # 被授权的设备：同样按设备展开
         permitted = self._perm_store.get_my_permissions(username)
-        for perm in permitted:
-            target_qq = perm.to_qq
-            if target_qq in bindings and target_qq != user.qq:
-                b = bindings[target_qq]
-                status_info = self._pool.get_user_status_info(target_qq)
-                feedback = self._pool.get_strength_feedback(target_qq)
-                my_devices.append(
-                    {
-                        "user_id": target_qq,
-                        "server_url": b.server_url,
-                        "status": status_info["status"]
-                        if status_info
-                        else "disconnected",
-                        "is_bound": status_info["is_bound"] if status_info else False,
-                        "strength_a": feedback["strength_a"] if feedback else 0,
-                        "strength_b": feedback["strength_b"] if feedback else 0,
-                        "limit_a": feedback["limit_a"] if feedback else 200,
-                        "limit_b": feedback["limit_b"] if feedback else 200,
-                        "owner": perm.to_username,
-                        "is_permitted": True,
-                    }
-                )
+        permitted_qqs = {p.to_qq for p in permitted if p.to_qq != user.qq}
+        if permitted_qqs:
+            for user_id, device_id, b in self._store.iter_all_device_bindings():
+                if user_id in permitted_qqs:
+                    perm = next(p for p in permitted if p.to_qq == user_id)
+                    card = self._build_device_card(user_id, b)
+                    card["owner"] = perm.to_username
+                    card["is_permitted"] = True
+                    my_devices.append(card)
 
         return web.json_response({"devices": my_devices, "qq": user.qq})
 
@@ -361,10 +351,11 @@ class DGLabWebUI:
         if not username:
             return web.json_response({"error": "未登录"}, status=401)
         user_id = request.match_info["user_id"]
+        device_id = request.match_info["device_id"]
         if not self._check_device_access(username, user_id):
             return web.json_response({"error": "无权访问该设备"}, status=403)
-        status_info = self._pool.get_user_status_info(user_id)
-        feedback = self._pool.get_strength_feedback(user_id)
+        status_info = self._pool.get_user_status_info(user_id, device_id)
+        feedback = self._pool.get_strength_feedback(user_id, device_id)
         if not status_info:
             return web.json_response({"error": "设备未连接"}, status=404)
         result = {**status_info}
@@ -377,6 +368,7 @@ class DGLabWebUI:
         if not username:
             return web.json_response({"error": "未登录"}, status=401)
         user_id = request.match_info["user_id"]
+        device_id = request.match_info["device_id"]
         if not self._check_device_access(username, user_id):
             return web.json_response({"error": "无权控制该设备"}, status=403)
         try:
@@ -392,7 +384,7 @@ class DGLabWebUI:
         channel_num = 1 if channel == "A" else 2
         try:
             result = await self._pool.send_strength_command(
-                user_id, channel_num, 2, value
+                user_id, device_id, channel_num, 2, value
             )
             return web.json_response({"ok": True, "message": result})
         except Exception as e:
@@ -403,6 +395,7 @@ class DGLabWebUI:
         if not username:
             return web.json_response({"error": "未登录"}, status=401)
         user_id = request.match_info["user_id"]
+        device_id = request.match_info["device_id"]
         if not self._check_device_access(username, user_id):
             return web.json_response({"error": "无权控制该设备"}, status=403)
         try:
@@ -421,7 +414,7 @@ class DGLabWebUI:
         pulse_data = WAVE_PRESETS[preset]["data"]
         try:
             result = await self._pool.send_pulse_command(
-                user_id, channel, pulse_data, duration
+                user_id, device_id, channel, pulse_data, duration
             )
             return web.json_response({"ok": True, "message": result})
         except Exception as e:
@@ -432,10 +425,11 @@ class DGLabWebUI:
         if not username:
             return web.json_response({"error": "未登录"}, status=401)
         user_id = request.match_info["user_id"]
+        device_id = request.match_info["device_id"]
         if not self._check_device_access(username, user_id):
             return web.json_response({"error": "无权控制该设备"}, status=403)
         try:
-            result = await self._pool.stop_all(user_id)
+            result = await self._pool.stop_all(user_id, device_id)
             return web.json_response({"ok": True, "message": result})
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
@@ -453,26 +447,34 @@ class DGLabWebUI:
         if not username:
             return web.json_response({"error": "未登录"}, status=401)
         public_users = self._user_store.list_public_users()
-        bindings = self._store.list_all_bindings()
+        # 收集公开用户的 QQ 集合，用于过滤设备
+        public_qqs = {pu["qq"]: pu for pu in public_users if pu["username"] != username}
         plaza_devices = []
-        for pu in public_users:
-            if pu["username"] == username:
+        # 按设备展开：一个公开用户有多台设备 → 多条广场记录
+        for user_id, device_id, b in self._store.iter_all_device_bindings():
+            if user_id not in public_qqs:
                 continue
+            pu = public_qqs[user_id]
             target_user = self._user_store.get_user(pu["username"])
-            if not target_user or not target_user.allow_requests:
+            if not target_user:
                 continue
-            qq = pu["qq"]
-            if qq in bindings:
-                status_info = self._pool.get_user_status_info(qq)
-                plaza_devices.append(
-                    {
-                        "username": pu["username"],
-                        "qq": qq,
-                        "status": status_info["status"]
-                        if status_info
-                        else "disconnected",
-                    }
-                )
+            status_info = self._pool.get_user_status_info(user_id, device_id)
+            plaza_devices.append(
+                {
+                    "username": pu["username"],
+                    "nickname": target_user.nickname or pu["username"],
+                    "avatar": target_user.avatar or "",
+                    "qq": user_id,
+                    "device_id": device_id,
+                    "device_index": b.device_index,
+                    "status": status_info["status"]
+                    if status_info
+                    else "disconnected",
+                    # allow_requests 控制的是“能否申请控制”，与“是否在广场显示”独立。
+                    # public_device=True 即应在广场展示；前端据此决定申请按钮是否可用。
+                    "allow_requests": target_user.allow_requests,
+                }
+            )
         return web.json_response({"devices": plaza_devices})
 
     async def _handle_plaza_request(self, request: web.Request) -> web.Response:
@@ -1710,6 +1712,7 @@ body{font-family:'Roboto',sans-serif;background:var(--md-sys-color-surface);colo
 .auth-switch a{color:var(--md-sys-color-primary);text-decoration:none;cursor:pointer;font-weight:500}
 /* Owner tag */
 .owner-tag{font-size:.75rem;padding:2px 8px;border-radius:4px;background:var(--md-sys-color-tertiary-container);color:var(--md-sys-color-on-tertiary-container);margin-left:8px}
+.device-index{font-size:.75rem;padding:2px 8px;border-radius:4px;background:var(--md-sys-color-primary-container);color:var(--md-sys-color-on-primary-container);margin-left:8px;font-weight:600}
 /* Plaza */
 .plaza-card{background:var(--md-sys-color-surface-container);border-radius:var(--md-sys-shape-corner-large);padding:20px;margin-bottom:12px;border:1px solid var(--md-sys-color-outline-variant);display:flex;justify-content:space-between;align-items:center}
 .plaza-info{display:flex;align-items:center;gap:12px}
@@ -2018,13 +2021,6 @@ html,body{overflow-x:hidden;max-width:100vw}
         <div class="md-text-field" id="field-email" style="display:none">
           <input type="email" id="input-email" placeholder=" " autocomplete="email">
           <label for="input-email">邮箱地址</label>
-        </div>
-        <div class="md-text-field" id="field-code" style="display:none">
-          <div style="display:flex;gap:8px;align-items:center">
-            <input type="text" id="input-code" placeholder=" " autocomplete="one-time-code" maxlength="6" style="flex:1">
-            <label for="input-code" style="pointer-events:none">验证码</label>
-          </div>
-          <button type="button" class="md-btn md-btn-tonal" id="send-code-btn" onclick="sendVerificationCode()" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);padding:6px 12px;font-size:.75rem;white-space:nowrap;z-index:1">发送验证码</button>
         </div>
         <div class="md-text-field">
           <input type="password" id="input-password" placeholder=" " required autocomplete="current-password">
@@ -2640,7 +2636,10 @@ const PRESETS=[
   {id:'pulse',name:'脉冲',icon:'electric_bolt'},
   {id:'wave',name:'波浪',icon:'waves'},
   {id:'tap',name:'敲击',icon:'touch_app'},
-  {id:'storm',name:'风暴',icon:'thunderstorm'}
+  {id:'heartbeat',name:'心跳',icon:'favorite'},
+  {id:'needle',name:'针刺',icon:'vaccines'},
+  {id:'throb',name:'律动',icon:'graphic_eq'},
+  {id:'chaos',name:'混乱',icon:'shuffle'}
 ];
 let currentPage='devices';
 let isTransitioning=false;
@@ -2716,13 +2715,10 @@ function toggleAuthMode(skipPush){
   document.getElementById('auth-switch-text').textContent=isRegisterMode?'已有账号？':'还没有账号？';
   document.getElementById('auth-switch-link').textContent=isRegisterMode?'登录':'注册';
   document.getElementById('field-email').style.display=isRegisterMode?'':'none';
-  document.getElementById('field-code').style.display=isRegisterMode?'':'none';
   if(isRegisterMode){
     document.getElementById('input-email').required=true;
-    document.getElementById('input-code').required=true;
   }else{
     document.getElementById('input-email').required=false;
-    document.getElementById('input-code').required=false;
   }
   if(!skipPush){
     history.pushState({page:isRegisterMode?'register':'login'},'',(isRegisterMode?'/register':'/login'));
@@ -2740,10 +2736,8 @@ async function handleAuth(e){
   }
   if(isRegisterMode){
     const email=document.getElementById('input-email').value.trim();
-    const code=document.getElementById('input-code').value.trim();
     if(!email){showSnackbar('请输入邮箱地址');return false;}
-    if(!code){showSnackbar('请输入验证码');return false;}
-    const r=await api('POST','/api/auth/register-with-email',{username,email,password,code,turnstile_token:turnstileToken});
+    const r=await api('POST','/api/auth/register',{username,email,password,turnstile_token:turnstileToken});
     if(r){showSnackbar('注册成功，请登录');resetTurnstileWidget();toggleAuthMode();}
   }else{
     const r=await api('POST','/api/auth/login',{username,password,turnstile_token:turnstileToken});
@@ -2751,37 +2745,6 @@ async function handleAuth(e){
     else{resetTurnstileWidget();}
   }
   return false;
-}
-let sendCodeCooldown=0;
-let sendCodeTimer=null;
-
-async function sendVerificationCode(){
-  const email=document.getElementById('input-email').value.trim();
-  if(!email){showSnackbar('请先输入邮箱地址');return;}
-  // Basic email format check
-  if(!/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(email)){
-    showSnackbar('邮箱格式不正确');return;
-  }
-  const btn=document.getElementById('send-code-btn');
-  btn.disabled=true;
-  const r=await api('POST','/api/auth/resend-verification',{email});
-  if(r){
-    showSnackbar('验证码已发送');
-    sendCodeCooldown=60;
-    btn.textContent=sendCodeCooldown+'s';
-    sendCodeTimer=setInterval(()=>{
-      sendCodeCooldown--;
-      if(sendCodeCooldown<=0){
-        clearInterval(sendCodeTimer);
-        btn.textContent='发送验证码';
-        btn.disabled=false;
-      }else{
-        btn.textContent=sendCodeCooldown+'s';
-      }
-    },1000);
-  }else{
-    btn.disabled=false;
-  }
 }
 async function logout(){
   await api('POST','/api/auth/logout');
@@ -2916,43 +2879,59 @@ function renderDevices(){
   empty.style.display='none';
   list.innerHTML=devices.map(d=>{
     const ownerTag=d.is_permitted?`<span class="owner-tag">来自 ${d.owner}</span>`:'';
+    // 同一用户多设备时显示 #序号 区分
+    const idxTag=d.device_index?`<span class="device-index">#${d.device_index}</span>`:'';
+    const uid=d.user_id,did=d.device_id;
     return `<div class="device-card">
       <div class="device-header">
-        <span class="device-id">${d.user_id}${ownerTag}</span>
+        <span class="device-id">${uid}${idxTag}${ownerTag}</span>
         <span class="status-badge ${statusClass(d.status)}">${statusText(d.status)}</span>
       </div>
       <div class="channel-section">
         <div class="channel-label"><span class="channel-name">A 通道</span><span>${d.strength_a} / ${d.limit_a}</span></div>
         <div class="slider-row">
-          <input type="range" min="0" max="${d.limit_a}" value="${d.strength_a}" data-uid="${d.user_id}" data-ch="A" aria-label="A通道强度" oninput="this.parentElement.querySelector('.slider-value').textContent=this.value" onchange="setStrength(this)">
+          <input type="range" min="0" max="${d.limit_a}" value="${d.strength_a}" data-uid="${uid}" data-did="${did}" data-ch="A" aria-label="A通道强度" oninput="this.parentElement.querySelector('.slider-value').textContent=this.value" onchange="setStrength(this)">
           <span class="slider-value">${d.strength_a}</span>
         </div>
       </div>
       <div class="channel-section">
         <div class="channel-label"><span class="channel-name">B 通道</span><span>${d.strength_b} / ${d.limit_b}</span></div>
         <div class="slider-row">
-          <input type="range" min="0" max="${d.limit_b}" value="${d.strength_b}" data-uid="${d.user_id}" data-ch="B" aria-label="B通道强度" oninput="this.parentElement.querySelector('.slider-value').textContent=this.value" onchange="setStrength(this)">
+          <input type="range" min="0" max="${d.limit_b}" value="${d.strength_b}" data-uid="${uid}" data-did="${did}" data-ch="B" aria-label="B通道强度" oninput="this.parentElement.querySelector('.slider-value').textContent=this.value" onchange="setStrength(this)">
           <span class="slider-value">${d.strength_b}</span>
         </div>
       </div>
+      <div class="duration-row" style="display:flex;align-items:center;gap:8px;margin:8px 0 4px">
+        <span class="material-symbols-outlined" style="font-size:18px;opacity:.7">timer</span>
+        <span style="font-size:.85rem;opacity:.8">持续时长</span>
+        <select class="pulse-duration" data-uid="${uid}" data-did="${did}" aria-label="波形持续时长" style="flex:1;padding:6px 8px;border-radius:var(--md-sys-shape-corner-small);border:1px solid var(--md-sys-color-outline-variant);background:var(--md-sys-color-surface-container);color:var(--md-sys-color-on-surface);font-size:.85rem">
+          <option value="5">5 秒</option>
+          <option value="10" selected>10 秒</option>
+          <option value="15">15 秒</option>
+          <option value="30">30 秒</option>
+          <option value="60">60 秒</option>
+        </select>
+      </div>
       <div class="btn-row">
-        ${PRESETS.map(p=>`<button class="md-btn md-btn-tonal" onclick="sendPulse('${d.user_id}','A','${p.id}')"><span class="material-symbols-outlined" style="font-size:18px">${p.icon}</span>${p.name} A</button><button class="md-btn md-btn-tonal" onclick="sendPulse('${d.user_id}','B','${p.id}')"><span class="material-symbols-outlined" style="font-size:18px">${p.icon}</span>${p.name} B</button>`).join('')}
-        <button class="md-btn md-btn-error" onclick="stopDevice('${d.user_id}')"><span class="material-symbols-outlined" style="font-size:18px">stop_circle</span>停止全部</button>
+        ${PRESETS.map(p=>`<button class="md-btn md-btn-tonal" onclick="sendPulse('${uid}','${did}','A','${p.id}')"><span class="material-symbols-outlined" style="font-size:18px">${p.icon}</span>${p.name} A</button><button class="md-btn md-btn-tonal" onclick="sendPulse('${uid}','${did}','B','${p.id}')"><span class="material-symbols-outlined" style="font-size:18px">${p.icon}</span>${p.name} B</button>`).join('')}
+        <button class="md-btn md-btn-error" onclick="stopDevice('${uid}','${did}')"><span class="material-symbols-outlined" style="font-size:18px">stop_circle</span>停止全部</button>
       </div>
     </div>`;
   }).join('');
 }
 async function setStrength(el){
-  const uid=el.dataset.uid,ch=el.dataset.ch,val=parseInt(el.value);
-  const r=await api('POST','/api/device/'+uid+'/strength',{channel:ch,value:val});
+  const uid=el.dataset.uid,did=el.dataset.did,ch=el.dataset.ch,val=parseInt(el.value);
+  const r=await api('POST','/api/device/'+uid+'/'+did+'/strength',{channel:ch,value:val});
   if(r)showSnackbar(r.message);
 }
-async function sendPulse(uid,ch,preset){
-  const r=await api('POST','/api/device/'+uid+'/pulse',{channel:ch,preset:preset,duration:5});
+async function sendPulse(uid,did,ch,preset){
+  const sel=document.querySelector('.pulse-duration[data-uid="'+uid+'"][data-did="'+did+'"]');
+  const duration=sel?parseInt(sel.value):10;
+  const r=await api('POST','/api/device/'+uid+'/'+did+'/pulse',{channel:ch,preset:preset,duration:duration});
   if(r)showSnackbar(r.message);
 }
-async function stopDevice(uid){
-  const r=await api('POST','/api/device/'+uid+'/stop',{});
+async function stopDevice(uid,did){
+  const r=await api('POST','/api/device/'+uid+'/'+did+'/stop',{});
   if(r)showSnackbar(r.message);
 }
 
@@ -2964,18 +2943,27 @@ async function loadPlaza(){
   const empty=document.getElementById('no-plaza');
   if(!r.devices.length){list.innerHTML='';empty.style.display='block';return;}
   empty.style.display='none';
-  list.innerHTML=r.devices.map(d=>`<div class="plaza-card">
+  list.innerHTML=r.devices.map(d=>{
+    const nick=d.nickname||d.username;
+    const avatarHtml=d.avatar
+      ?`<img src="${d.avatar}" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`
+      :`<span class="material-symbols-outlined">person</span>`;
+    // allow_requests=false 时显示“不接受申请”，申请按钮禁用
+    const canReq=d.allow_requests!==false;
+    const btnHtml=canReq
+      ?`<button class="md-btn md-btn-tonal" onclick="requestControl('${d.username}')"><span class="material-symbols-outlined" style="font-size:18px">send</span>申请控制</button>`
+      :`<span class="md-body-small on-surface-variant" style="opacity:.6">不接受申请</span>`;
+    return `<div class="plaza-card">
     <div class="plaza-info">
-      <div class="plaza-avatar"><span class="material-symbols-outlined">person</span></div>
+      <div class="plaza-avatar">${avatarHtml}</div>
       <div>
-        <div class="md-title-medium">${d.username}</div>
+        <div class="md-title-medium">${nick}</div>
         <div class="md-body-medium on-surface-variant"><span class="status-badge ${statusClass(d.status)}" style="margin-left:0">${statusText(d.status)}</span></div>
       </div>
     </div>
-    <button class="md-btn md-btn-tonal" onclick="requestControl('${d.username}')">
-      <span class="material-symbols-outlined" style="font-size:18px">send</span>申请控制
-    </button>
-  </div>`).join('');
+    ${btnHtml}
+  </div>`;
+  }).join('');
 }
 async function requestControl(toUsername){
   const r=await api('POST','/api/plaza/request',{to_username:toUsername});
@@ -3704,7 +3692,7 @@ DG-LAB 是一款基于蓝牙通信的电刺激设备，支持通过手机 APP �
 
 - **双通道输出**：A/B 两个独立通道，可分别控制
 - **强度范围**：0-200 级可调
-- **波形预设**：支持呼吸、脉冲、波浪、敲击、风暴等多种波形
+- **波形预设**：支持呼吸、脉冲、波浪、敲击、心跳、针刺、律动、混乱等多种波形
 - **远程控制**：通过 WebSocket 协议实现网络远程操控
 - **安全机制**：设备端可设置强度上限，防止远程端超限操作
 - **低功耗蓝牙**：采用 BLE 协议，续航持久
@@ -3747,7 +3735,7 @@ DG-LAB 是一款基于蓝牙通信的电刺激设备，支持通过手机 APP �
 ## 设备绑定与管理
 
 - 通过聊天指令绑定设备到用户账号
-- 支持多设备管理，每个用户可绑定一台设备
+- 支持多设备管理，同一用户可同时绑定并控制多台设备（用序号 #1/#2/#3... 区分）
 - 设备状态实时监控（已连接/已绑定/未连接/重连中）
 - 自动重连机制，断线后自动尝试恢复连接
 
@@ -3765,7 +3753,8 @@ DG-LAB 是一款基于蓝牙通信的电刺激设备，支持通过手机 APP �
 
 - 基于浏览器的可视化控制界面
 - 支持实时调节 A/B 通道强度（滑块控制）
-- 支持发送波形预设（呼吸、脉冲、波浪、敲击、风暴）
+- 支持发送波形预设（呼吸、脉冲、波浪、敲击、心跳、针刺、律动、混乱）
+- 每个设备卡片可独立选择波形持续时长（5/10/15/30/60 秒）
 - 一键停止所有输出
 - 响应式设计，支持桌面端和移动端
 
@@ -3777,7 +3766,10 @@ DG-LAB 是一款基于蓝牙通信的电刺激设备，支持通过手机 APP �
 | 脉冲 | 短促有力的电击感 |
 | 波浪 | 连续起伏的波动感 |
 | 敲击 | 模拟轻拍的间断刺激 |
-| 风暴 | 高强度随机变化 |
+| 心跳 | 双拍心跳节奏（lub-dub） |
+| 针刺 | 高频持续尖刺，针扎感 |
+| 律动 | 低频缓慢起伏，厚重深沉 |
+| 混乱 | 强弱频率随机交替，不可预测 |
 
 ## 设备广场
 
@@ -3824,40 +3816,42 @@ DG-LAB 是一款基于蓝牙通信的电刺激设备，支持通过手机 APP �
 
 将 DG-LAB 设备绑定到当前用户。WebSocket 地址从 DG-LAB App 中获取。
 
-> 每个用户只能绑定一台设备。重复绑定会覆盖之前的绑定。
+> 同一用户可绑定多台设备，每台设备分配一个序号（#1、#2、#3...）。重复执行 \`/dglab bind\` 会追加新设备而非覆盖。
 
 ## 解除绑定
 
 \`\`\`
-/dglab unbind
+/dglab unbind [设备序号]
 \`\`\`
 
-解除当前用户的设备绑定。解除后将无法通过指令或 WebUI 控制设备。
+解除设备绑定。仅绑定了 1 台设备时可省略序号；多台设备时需指定序号，如 \`/dglab unbind 2\` 解绑 #2。
 
 ## 设置强度
 
 \`\`\`
-/dglab strength <通道> <强度值>
+/dglab strength [设备序号] <通道> <强度值>
 \`\`\`
 
+- 设备序号：可选，多设备时指定（如 \`2\` 表示 #2），省略则操作 #1
 - 通道：\`A\` 或 \`B\`
 - 强度值：0-200 的整数
 
-示例：\`/dglab strength A 50\`
+示例：\`/dglab strength A 50\` 或 \`/dglab strength 2 A 50\`
 
 > 实际最大强度受设备端限制。如果设备端设置了上限为 100，则即使发送 200 也只会生效到 100。
 
 ## 发送波形
 
 \`\`\`
-/dglab pulse <通道> <预设名> [持续秒数]
+/dglab pulse [设备序号] <通道> <预设名> [持续秒数]
 \`\`\`
 
+- 设备序号：可选，省略则操作 #1
 - 通道：\`A\` 或 \`B\`
-- 预设名：\`breathe\`（呼吸）、\`pulse\`（脉冲）、\`wave\`（波浪）、\`tap\`（敲击）、\`storm\`（风暴）
+- 预设名：\`breathe\`（呼吸）、\`pulse\`（脉冲）、\`wave\`（波浪）、\`tap\`（敲击）、\`heartbeat\`（心跳）、\`needle\`（针刺）、\`throb\`（律动）、\`chaos\`（混乱）
 - 持续秒数：1-60，默认 5 秒
 
-示例：\`/dglab pulse A breathe 10\`
+示例：\`/dglab pulse A breathe 10\` 或 \`/dglab pulse 2 A breathe 10\`
 
 ### 波形参数
 
@@ -3867,7 +3861,10 @@ DG-LAB 是一款基于蓝牙通信的电刺激设备，支持通过手机 APP �
 | 脉冲 | pulse | 5s |
 | 波浪 | wave | 5s |
 | 敲击 | tap | 5s |
-| 风暴 | storm | 5s |
+| 心跳 | heartbeat | 5s |
+| 针刺 | needle | 5s |
+| 律动 | throb | 5s |
+| 混乱 | chaos | 5s |
 
 ## 停止输出
 

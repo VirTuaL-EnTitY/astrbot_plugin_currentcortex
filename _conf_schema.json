@@ -29,8 +29,8 @@
     "type": "int",
     "default": 15
   },
-  "femboy_api_key": {
-    "description": "男娘图片 API 密钥 (x-api-key)，留空则禁用 /femboy 命令",
+  "leiz_api_key": {
+    "description": "LeiZ API 统一密钥（请求头 x-api-key）。所有接口（含免费接口）均需携带。留空将禁用 Pixiv/一言/天气/男娘/点歌/JMComic 等全部 LeiZ 接口命令",
     "type": "string",
     "default": ""
   },

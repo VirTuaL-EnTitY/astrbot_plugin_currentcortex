@@ -229,7 +229,7 @@ FEMBOY_HELP_TEXT = """👗 男娘图片 使用说明
 ⚙️ 配置要求
   ⚠️ 使用前必须配置 API 密钥：
   1. 打开插件配置面板
-  2. 填写「femboy_api_key」字段（您的 x-api-key）
+  2. 填写「leiz_api_key」字段（LeiZ API 统一密钥，请求头 x-api-key）
   3. 保存配置并重启插件
 
 ⚠️ 注意事项
@@ -344,12 +344,35 @@ MEDIA_PARSER_HELP_TEXT = """🔍 媒体内容解析 使用说明
   • 如遇问题可发送 /解析 help 查看帮助"""
 
 
+API_TEST_HELP_TEXT = """🔍 LeiZ API 接口连通性测试 使用说明
+
+📌 用途
+  对插件依赖的全部 LeiZ 上游接口做一次真实鉴权探测，
+  快速定位某个接口是否异常（而非代码问题）。
+
+📌 用法
+  /apitest                测试全部接口（别名：/连通测试、/接口测试）
+  /apitest help           显示此帮助信息
+
+📌 状态含义
+  🟢 正常        接口返回成功
+  🟡 HTTP 异常   收到非 200 响应（如 401 鉴权失败 / 402 配额 / 5xx）
+  🔴 网络/超时   连接失败或超过配置超时未响应
+  ⚫ 跳过        对应客户端未初始化（通常因未配置 API Key）
+
+📌 说明
+  • 6 个接口并行探测，总耗时取决于最慢的一个
+  • 探测使用每个接口最轻量的只读请求，不消耗图片/音频下载流量
+  • 单接口超时由配置项 request_timeout 控制（默认 15s）"""
+
+
 class PixivAPIClient:
-    def __init__(self, timeout: int = 15):
+    def __init__(self, api_key: str = "", timeout: int = 15):
         self._timeout = aiohttp.ClientTimeout(total=timeout)
         self._headers = {
             "User-Agent": "AstrBot-CurrentCortex-Plugin/1.0",
             "Accept": "application/json, image/*",
+            "x-api-key": api_key,
         }
 
     async def fetch_images(self, **params) -> Dict[str, Any]:
@@ -513,11 +536,12 @@ class CommandParser:
 
 
 class HitokotoAPIClient:
-    def __init__(self, timeout: int = 10):
+    def __init__(self, api_key: str = "", timeout: int = 10):
         self._timeout = aiohttp.ClientTimeout(total=timeout)
         self._headers = {
             "User-Agent": "AstrBot-Hitokoto-Plugin/1.0",
             "Accept": "application/json",
+            "x-api-key": api_key,
         }
 
     async def fetch_hitokoto(
@@ -576,11 +600,12 @@ class HitokotoAPIClient:
 
 
 class WeatherAPIClient:
-    def __init__(self, timeout: int = 15):
+    def __init__(self, api_key: str = "", timeout: int = 15):
         self._timeout = aiohttp.ClientTimeout(total=timeout)
         self._headers = {
             "User-Agent": "AstrBot-Weather-Plugin/1.0",
             "Accept": "application/json",
+            "x-api-key": api_key,
         }
 
     async def fetch_weather(self, city: str) -> Dict[str, Any]:
@@ -659,14 +684,11 @@ class WeatherAPIClient:
 
 class FemboyAPIClient:
     def __init__(self, api_key: str = "", timeout: int = 15):
-        if not api_key or not api_key.strip():
-            raise ValueError("API 密钥不能为空，请在插件配置中填写 femboy_api_key")
-
         self._timeout = aiohttp.ClientTimeout(total=timeout)
         self._headers = {
             "User-Agent": "AstrBot-Femboy-Plugin/1.0",
             "Accept": "application/json, image/*",
-            "x-api-key": api_key.strip(),
+            "x-api-key": api_key,
         }
 
     async def fetch_femboy_image(self) -> Dict[str, Any]:
@@ -725,12 +747,78 @@ class FemboyAPIClient:
 
 
 class NeteaseAPIClient:
-    def __init__(self, timeout: int = 15):
+    def __init__(self, api_key: str = "", timeout: int = 15):
         self._timeout = aiohttp.ClientTimeout(total=timeout)
         self._headers = {
             "User-Agent": "AstrBot-Music-Plugin/1.0",
             "Accept": "application/json",
+            "x-api-key": api_key,
         }
+
+    # 点歌接口偶发瞬时超时（见日志），对超时/网络错误重试以提升成功率。
+    # 重试策略：共 3 次尝试（初次 + 2 次重试），指数退避（0.5s → 1s），
+    # 仅对 asyncio.TimeoutError / aiohttp.ClientError 重试；HTTP 业务错误
+    # （401/402/5xx 等）和 API 返回的业务错误不重试——它们重试也不会成功。
+    #
+    # 单次请求超时独立于全局 request_timeout 配置：实测点歌接口成功的请求
+    # P95 < 1.5s，卡住的请求会耗尽任何超时上限。故把单次超时压到 6s，
+    # 让重试更快触发——失败场景从 15s×3=45s 降到 6s×3≈19s，成功仍秒回。
+    NETEASE_MAX_ATTEMPTS = 3
+    NETEASE_RETRY_BACKOFF_BASE = 0.5  # 秒；第 n 次重试前等待 base * 2^(n-1)
+    NETEASE_REQUEST_TIMEOUT = 6.0  # 秒；单次请求超时（独立于全局 request_timeout）
+
+    async def _get_with_retry(
+        self, url: str, params: Dict[str, Any], tag: str
+    ) -> Dict[str, Any]:
+        """带重试的 GET 请求。返回解析后的 JSON dict。
+
+        - 仅对超时/网络错误重试（共 NETEASE_MAX_ATTEMPTS 次），指数退避。
+        - HTTP 非 200 与业务错误（success=false 等）直接抛出，不消耗重试次数。
+        - 单次请求使用 NETEASE_REQUEST_TIMEOUT（6s），而非全局 _timeout。
+        """
+        per_request_timeout = aiohttp.ClientTimeout(total=self.NETEASE_REQUEST_TIMEOUT)
+        last_exc: Optional[Exception] = None
+        for attempt in range(1, self.NETEASE_MAX_ATTEMPTS + 1):
+            async with aiohttp.ClientSession(
+                timeout=per_request_timeout, headers=self._headers
+            ) as session:
+                try:
+                    async with session.get(url, params=params) as resp:
+                        if resp.status != 200:
+                            error_text = await resp.text()
+                            logger.error(
+                                f"[Netease] {tag} API returned status {resp.status}: {error_text[:500]}"
+                            )
+                            raise NeteaseAPIError(
+                                f"API 请求失败 (HTTP {resp.status})",
+                                status_code=resp.status,
+                            )
+                        data = await resp.json()
+                        return data  # 业务校验交由调用方完成
+                except asyncio.TimeoutError:
+                    last_exc = NeteaseAPIError(
+                        "API 请求超时，请稍后再试", status_code=0
+                    )
+                    logger.warning(
+                        f"[Netease] {tag} timeout (attempt {attempt}/{self.NETEASE_MAX_ATTEMPTS})"
+                    )
+                except aiohttp.ClientError as e:
+                    last_exc = NeteaseAPIError(
+                        f"网络请求失败: {str(e)}", status_code=0
+                    )
+                    logger.warning(
+                        f"[Netease] {tag} network error (attempt {attempt}/{self.NETEASE_MAX_ATTEMPTS}): {e}"
+                    )
+
+            # 此处仅在网络/超时错误时到达：决定是否重试
+            if attempt < self.NETEASE_MAX_ATTEMPTS:
+                backoff = self.NETEASE_RETRY_BACKOFF_BASE * (2 ** (attempt - 1))
+                logger.debug(f"[Netease] {tag} retrying in {backoff}s")
+                await asyncio.sleep(backoff)
+
+        # 所有尝试均失败
+        assert last_exc is not None
+        raise last_exc
 
     async def get_song(
         self, song_id: str, level: Optional[str] = None
@@ -744,46 +832,24 @@ class NeteaseAPIClient:
             params["level"] = level
         logger.debug(f"[Netease] Fetching song by id: {song_id}, level: {level}")
 
-        async with aiohttp.ClientSession(
-            timeout=self._timeout, headers=self._headers
-        ) as session:
-            try:
-                async with session.get(NETEASE_API_URL, params=params) as resp:
-                    if resp.status != 200:
-                        error_text = await resp.text()
-                        logger.error(
-                            f"[Netease] API returned status {resp.status}: {error_text[:500]}"
-                        )
-                        raise NeteaseAPIError(
-                            f"API 请求失败 (HTTP {resp.status})",
-                            status_code=resp.status,
-                        )
+        data = await self._get_with_retry(NETEASE_API_URL, params, "get_song")
+        logger.debug(f"[Netease] Song response: {data}")
 
-                    data = await resp.json()
-                    logger.debug(f"[Netease] Song response: {data}")
+        if not isinstance(data, dict):
+            raise NeteaseAPIError("API 返回数据格式异常")
 
-                    if not isinstance(data, dict):
-                        raise NeteaseAPIError("API 返回数据格式异常")
+        if not data.get("success"):
+            msg = data.get("message", "未知错误")
+            raise NeteaseAPIError(f"获取歌曲失败: {msg}")
 
-                    if not data.get("success"):
-                        msg = data.get("message", "未知错误")
-                        raise NeteaseAPIError(f"获取歌曲失败: {msg}")
+        song_data = data.get("data", {})
+        if not song_data:
+            raise NeteaseAPIError("API 返回歌曲数据为空")
 
-                    song_data = data.get("data", {})
-                    if not song_data:
-                        raise NeteaseAPIError("API 返回歌曲数据为空")
+        if not isinstance(song_data, dict):
+            raise NeteaseAPIError("API 返回歌曲数据格式异常")
 
-                    if not isinstance(song_data, dict):
-                        raise NeteaseAPIError("API 返回歌曲数据格式异常")
-
-                    return song_data
-
-            except aiohttp.ClientError as e:
-                logger.error(f"[Netease] Network error: {e}")
-                raise NeteaseAPIError(f"网络请求失败: {str(e)}", status_code=0) from e
-            except asyncio.TimeoutError:
-                logger.error("[Netease] Request timeout")
-                raise NeteaseAPIError("API 请求超时，请稍后再试", status_code=0)
+        return song_data
 
     async def search_songs(self, query: str) -> List[Dict[str, Any]]:
         """通过关键词搜索歌曲"""
@@ -793,55 +859,36 @@ class NeteaseAPIClient:
         params = {"q": query.strip()}
         logger.debug(f"[Netease] Searching songs: {query}")
 
-        async with aiohttp.ClientSession(
-            timeout=self._timeout, headers=self._headers
-        ) as session:
-            try:
-                async with session.get(NETEASE_SEARCH_URL, params=params) as resp:
-                    if resp.status != 200:
-                        error_text = await resp.text()
-                        logger.error(
-                            f"[Netease] Search API returned status {resp.status}: {error_text[:500]}"
-                        )
-                        raise NeteaseAPIError(
-                            f"API 请求失败 (HTTP {resp.status})",
-                            status_code=resp.status,
-                        )
+        data = await self._get_with_retry(
+            NETEASE_SEARCH_URL, params, "search_songs"
+        )
+        logger.debug(
+            f"[Netease] Search response keys: {list(data.keys()) if isinstance(data, dict) else type(data)}"
+        )
 
-                    data = await resp.json()
-                    logger.debug(
-                        f"[Netease] Search response keys: {list(data.keys()) if isinstance(data, dict) else type(data)}"
-                    )
+        if not isinstance(data, dict):
+            raise NeteaseAPIError("API 返回数据格式异常")
 
-                    if not isinstance(data, dict):
-                        raise NeteaseAPIError("API 返回数据格式异常")
+        if not data.get("success"):
+            msg = data.get("message", "未知错误")
+            raise NeteaseAPIError(f"搜索失败: {msg}")
 
-                    if not data.get("success"):
-                        msg = data.get("message", "未知错误")
-                        raise NeteaseAPIError(f"搜索失败: {msg}")
+        songs = data.get("data", [])
+        if not isinstance(songs, list):
+            raise NeteaseAPIError("API 返回搜索结果格式异常")
 
-                    songs = data.get("data", [])
-                    if not isinstance(songs, list):
-                        raise NeteaseAPIError("API 返回搜索结果格式异常")
-
-                    return songs
-
-            except aiohttp.ClientError as e:
-                logger.error(f"[Netease] Search network error: {e}")
-                raise NeteaseAPIError(f"网络请求失败: {str(e)}", status_code=0) from e
-            except asyncio.TimeoutError:
-                logger.error("[Netease] Search request timeout")
-                raise NeteaseAPIError("API 请求超时，请稍后再试", status_code=0)
+        return songs
 
 
 class JMComicAPIClient:
     """JMComic 漫画 API 客户端"""
 
-    def __init__(self, timeout: int = 30):
+    def __init__(self, api_key: str = "", timeout: int = 30):
         self._timeout = aiohttp.ClientTimeout(total=timeout)
         self._headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             "Accept": "application/json",
+            "x-api-key": api_key,
         }
 
     async def search(self, query: str, page: int = 1) -> Dict[str, Any]:
@@ -1006,11 +1053,25 @@ class JMComicAPIError(Exception):
         self.status_code = status_code
 
 
+def _format_api_key_not_configured(feature_name: str) -> str:
+    """统一生成「LeiZ API Key 未配置」提示，供所有依赖 LeiZ 接口的命令复用。"""
+    return (
+        f"❌ {feature_name}功能未启用\n\n"
+        "📝 原因：未配置 LeiZ API 统一密钥\n"
+        "💡 解决方法：\n"
+        "   1. 打开插件配置面板\n"
+        "   2. 找到「LeiZ API 统一密钥 (leiz_api_key)」字段\n"
+        "   3. 填写您的 API Key（请求头 x-api-key）\n"
+        "   4. 保存配置并重启插件\n\n"
+        "⚠️ 根据 LeiZ API 公告，所有接口（含免费接口）均需携带 API Key"
+    )
+
+
 @register(
     "astrbot_plugin_currentcortex",
     "AstrBot Community",
     "CurrentCortex 综合插件 - Pixiv 图片、每日一言、天气查询、网易云音乐、JMComic 漫画、DG-LAB 设备管理及小红书/B站/抖音媒体解析等",
-    "1.3.0",
+    "1.4.0",
 )
 class CurrentCortexPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -1022,30 +1083,64 @@ class CurrentCortexPlugin(Star):
         self._image_proxy = str(config.get("image_proxy", "pixiv.bileizhen.top"))
         self._exclude_ai = bool(config.get("exclude_ai", False))
         self._request_timeout = int(config.get("request_timeout", 15))
-        self._femboy_api_key = str(config.get("femboy_api_key", "")).strip()
 
-        if not self._femboy_api_key:
-            logger.warning(
-                "⚠️ 未配置男娘图片 API 密钥 (femboy_api_key)，/femboy 命令将无法使用"
-            )
-            logger.warning("请在插件配置面板中填写 femboy_api_key 字段")
-            self._femboy_client = None
-        else:
-            try:
-                self._femboy_client = FemboyAPIClient(
-                    api_key=self._femboy_api_key, timeout=self._request_timeout
+        # LeiZ API 统一鉴权：所有接口（含免费接口）均需携带 API Key。
+        # 经实测，LeiZ 服务端实际通过 x-api-key 请求头校验（而非公告中提及的
+        # Authorization: Bearer）。此处统一以 x-api-key 形式下发到各客户端。
+        leiz_api_key = str(config.get("leiz_api_key", "")).strip()
+
+        # 向后兼容：若未配置 leiz_api_key 但存在旧版 femboy_api_key，则回退使用，
+        # 并提示用户迁移到统一的 leiz_api_key 配置项。
+        if not leiz_api_key:
+            legacy_femboy_key = str(config.get("femboy_api_key", "")).strip()
+            if legacy_femboy_key:
+                leiz_api_key = legacy_femboy_key
+                logger.warning(
+                    "[LeiZ] 检测到旧版配置 femboy_api_key，已自动作为统一 API Key 使用。"
+                    "建议尽快在配置面板迁移到 leiz_api_key 字段（femboy_api_key 将在后续版本移除）。"
                 )
-                logger.info("✅ 男娘图片 API 客户端初始化成功")
-            except ValueError as e:
-                logger.error(f"❌ 男娘图片 API 客户端初始化失败: {e}")
-                self._femboy_client = None
 
-        self._api_client = PixivAPIClient(timeout=self._request_timeout)
-        self._hitokoto_client = HitokotoAPIClient(timeout=self._request_timeout)
-        self._weather_client = WeatherAPIClient(timeout=self._request_timeout)
-        self._netease_client = NeteaseAPIClient(timeout=self._request_timeout)
-        self._jmcomic_client = JMComicAPIClient(timeout=self._request_timeout)
+        self._leiz_api_key = leiz_api_key
         self._media_parser = MediaParserManager(timeout=self._request_timeout)
+
+        if not leiz_api_key:
+            # 未配置统一 API Key：禁用所有依赖 LeiZ 接口的客户端，相关命令会在
+            # 调用时通过守卫提示用户配置。
+            logger.warning(
+                "⚠️ 未配置 LeiZ API 统一密钥 (leiz_api_key)，Pixiv/一言/天气/男娘/点歌/JMComic "
+                "等全部 LeiZ 接口命令将不可用"
+            )
+            logger.warning(
+                "根据 LeiZ API 公告，所有接口（含免费接口）均需携带 API Key。"
+                "请在插件配置面板中填写 leiz_api_key 字段后重启插件。"
+            )
+            self._api_client = None
+            self._hitokoto_client = None
+            self._weather_client = None
+            self._femboy_client = None
+            self._netease_client = None
+            self._jmcomic_client = None
+        else:
+            self._api_client = PixivAPIClient(
+                api_key=leiz_api_key, timeout=self._request_timeout
+            )
+            self._hitokoto_client = HitokotoAPIClient(
+                api_key=leiz_api_key, timeout=self._request_timeout
+            )
+            self._weather_client = WeatherAPIClient(
+                api_key=leiz_api_key, timeout=self._request_timeout
+            )
+            self._femboy_client = FemboyAPIClient(
+                api_key=leiz_api_key, timeout=self._request_timeout
+            )
+            self._netease_client = NeteaseAPIClient(
+                api_key=leiz_api_key, timeout=self._request_timeout
+            )
+            self._jmcomic_client = JMComicAPIClient(
+                api_key=leiz_api_key, timeout=self._request_timeout
+            )
+            logger.info("✅ LeiZ API 客户端初始化成功（统一 x-api-key 鉴权）")
+
 
         # 读取 DG-LAB 新独立配置项（优先），兼容旧版 JSON 字符串配置
         server_url = str(config.get("dglab_server_url", "")).strip()
@@ -1086,7 +1181,7 @@ class CurrentCortexPlugin(Star):
         self._device_store = DeviceStore(data_dir="data")
         self._connection_pool = DeviceConnectionPool(
             device_store=self._device_store,
-            max_connections=50,
+            max_connections=200,
             idle_timeout=300,
             operation_timeout=10.0,
         )
@@ -1145,6 +1240,11 @@ class CurrentCortexPlugin(Star):
         if self._is_help_command(message_str):
             logger.info(f"[Hitokoto] Help command triggered by {user_name}")
             yield event.plain_result(HITOKOTO_HELP_TEXT)
+            return
+
+        if not self._hitokoto_client:
+            logger.warning(f"[Hitokoto] API client not initialized for user {user_name}")
+            yield event.plain_result(_format_api_key_not_configured("每日一言"))
             return
 
         try:
@@ -1217,6 +1317,11 @@ class CurrentCortexPlugin(Star):
         if self._is_help_command(message_str):
             logger.info(f"[Weather] Help command triggered by {user_name}")
             yield event.plain_result(WEATHER_HELP_TEXT)
+            return
+
+        if not self._weather_client:
+            logger.warning(f"[Weather] API client not initialized for user {user_name}")
+            yield event.plain_result(_format_api_key_not_configured("天气查询"))
             return
 
         try:
@@ -1401,16 +1506,7 @@ class CurrentCortexPlugin(Star):
 
         if not self._femboy_client:
             logger.warning(f"[Femboy] API client not initialized for user {user_name}")
-            yield event.plain_result(
-                "❌ 男娘图片功能未启用\n\n"
-                "📝 原因：未配置 API 密钥\n"
-                "💡 解决方法：\n"
-                "   1. 打开插件配置面板\n"
-                "   2. 找到「男娘图片 API 密钥 (femboy_api_key)」字段\n"
-                "   3. 填写您的 x-api-key\n"
-                "   4. 保存配置并重启插件\n\n"
-                "⚠️ 配置完成后即可使用 /femboy 命令"
-            )
+            yield event.plain_result(_format_api_key_not_configured("男娘图片"))
             return
 
         try:
@@ -1478,6 +1574,11 @@ class CurrentCortexPlugin(Star):
         if self._is_help_command(message_str):
             logger.info(f"[Music] Help command triggered by {user_name}")
             yield event.plain_result(MUSIC_HELP_TEXT)
+            return
+
+        if not self._netease_client:
+            logger.warning(f"[Music] API client not initialized for user {user_name}")
+            yield event.plain_result(_format_api_key_not_configured("网易云音乐点歌"))
             return
 
         try:
@@ -1668,7 +1769,11 @@ class CurrentCortexPlugin(Star):
         return results
 
     async def _download_audio_to_temp(self, url: str, name: str) -> Optional[str]:
-        """下载音频文件到临时目录，返回本地文件路径。非MP3格式会尝试转码为MP3。"""
+        """下载音频文件到临时目录，并压缩为语音条专用低码率 MP3。
+
+        无论上游返回何种格式（mp3/flac/wav/m4a），下载后一律经 ffmpeg
+        压缩为 64kbps 单声道 MP3，确保语音条不超平台大小限制。
+        """
         try:
             ext = ".mp3"
             if ".flac" in url.lower():
@@ -1687,7 +1792,15 @@ class CurrentCortexPlugin(Star):
             temp_path = os.path.join(temp_dir, f"{safe_name}{ext}")
 
             timeout = aiohttp.ClientTimeout(total=30)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
+            # LeiZ 接口要求所有请求携带 API Key（鉴权头为 x-api-key）。
+            # 歌曲下载地址可能经 LeiZ 代理，因此附加统一的 x-api-key 头；
+            # 对非 LeiZ 的 CDN 地址多带此头无副作用。
+            dl_headers = {"User-Agent": "AstrBot-Music-Plugin/1.0"}
+            if self._leiz_api_key:
+                dl_headers["x-api-key"] = self._leiz_api_key
+            async with aiohttp.ClientSession(
+                timeout=timeout, headers=dl_headers
+            ) as session:
                 async with session.get(url) as resp:
                     if resp.status != 200:
                         logger.warning(f"[Music] 下载音频失败: HTTP {resp.status}")
@@ -1697,25 +1810,33 @@ class CurrentCortexPlugin(Star):
                         async for chunk in resp.content.iter_chunked(8192):
                             f.write(chunk)
 
-            if ext != ".mp3":
-                converted = await self._convert_to_mp3(temp_path, temp_dir, safe_name)
-                if converted:
-                    return converted
-                logger.warning(f"[Music] 转码失败，语音条可能无法播放: {temp_path}")
-
-            logger.debug(f"[Music] 音频已下载到: {temp_path}")
+            # 一律压缩为 64kbps 单声道 MP3，避免语音条超平台大小限制。
+            # 源文件已是 .mp3 时仍需重压（上游常见 320kbps，体积过大）。
+            src_mb = os.path.getsize(temp_path) / (1024 * 1024)
+            logger.debug(f"[Music] 原始音频已下载: {temp_path} ({src_mb:.2f}MB)")
+            compressed = await self._compress_for_voice(temp_path, temp_dir, safe_name)
+            if compressed:
+                return compressed
+            logger.warning(
+                f"[Music] 压缩失败，将使用原始文件发送语音条（可能超限）: {temp_path}"
+            )
             return temp_path
 
         except Exception as e:
             logger.warning(f"[Music] 下载音频异常: {e}")
             return None
 
-    async def _convert_to_mp3(
+    async def _compress_for_voice(
         self, source_path: str, temp_dir: str, safe_name: str
     ) -> Optional[str]:
-        """使用ffmpeg将音频转码为MP3 320kbps"""
+        """将音频压缩为语音条专用的低码率 MP3。
+
+        平台语音消息（Record/silk）有严格的大小限制，原文件（如 320kbps
+        立体声，4分钟约 9MB）会触发"发送消息链失败"。语音场景不需要高音质，
+        故统一压到 64kbps 单声道——4分钟歌曲约 1.8MB，兼顾体积与清晰度。
+        """
         if not shutil.which("ffmpeg"):
-            logger.warning("[Music] ffmpeg 未安装，无法转码非MP3音频")
+            logger.warning("[Music] ffmpeg 未安装，无法压缩音频，语音条可能超限")
             return None
 
         mp3_path = os.path.join(temp_dir, f"{safe_name}.mp3")
@@ -1725,26 +1846,33 @@ class CurrentCortexPlugin(Star):
                 "-y",
                 "-i",
                 source_path,
-                "-vn",
+                "-vn",  # 丢弃视频/封面流
+                "-codec:a",
+                "libmp3lame",
                 "-ar",
-                "44100",
+                "24000",  # 采样率：语音足够
                 "-ac",
-                "2",
+                "1",  # 单声道
                 "-b:a",
-                "320k",
+                "64k",  # 码率：4分钟约 1.8MB
                 mp3_path,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
             )
             await asyncio.wait_for(proc.wait(), timeout=60)
             if proc.returncode == 0 and os.path.exists(mp3_path):
-                os.remove(source_path)
-                logger.info(f"[Music] 已转码为MP3: {mp3_path}")
+                # 压缩后体积应明显小于源文件；删除源文件（若与输出不同）
+                if os.path.abspath(source_path) != os.path.abspath(mp3_path):
+                    os.remove(source_path)
+                src_mb = os.path.getsize(mp3_path) / (1024 * 1024)
+                logger.info(
+                    f"[Music] 已压缩为语音条 MP3 (64kbps mono): {mp3_path} ({src_mb:.2f}MB)"
+                )
                 return mp3_path
         except asyncio.TimeoutError:
-            logger.warning("[Music] ffmpeg 转码超时")
+            logger.warning("[Music] ffmpeg 压缩超时")
         except Exception as e:
-            logger.warning(f"[Music] ffmpeg 转码异常: {e}")
+            logger.warning(f"[Music] ffmpeg 压缩异常: {e}")
         return None
 
     @staticmethod
@@ -1783,6 +1911,11 @@ class CurrentCortexPlugin(Star):
         if self._is_help_command(message_str):
             logger.info(f"Help command triggered by {user_name}")
             yield event.plain_result(HELP_TEXT)
+            return
+
+        if not self._api_client:
+            logger.warning(f"Pixiv API client not initialized for user {user_name}")
+            yield event.plain_result(_format_api_key_not_configured("Pixiv 随机图片"))
             return
 
         try:
@@ -2064,6 +2197,11 @@ class CurrentCortexPlugin(Star):
         if self._is_help_command(message_str):
             logger.info(f"[JMComic] Help command triggered by {user_name}")
             yield event.plain_result(JMCOMIC_HELP_TEXT)
+            return
+
+        if not self._jmcomic_client:
+            logger.warning(f"[JMComic] API client not initialized for user {user_name}")
+            yield event.plain_result(_format_api_key_not_configured("JMComic 漫画"))
             return
 
         try:
@@ -2348,6 +2486,11 @@ class CurrentCortexPlugin(Star):
                 "💡 返回漫画的标题、作者、分类等信息\n"
                 "💡 使用 /jm detail <ID>（或 /漫画 详情 <ID>）可查看详情"
             )
+            return
+
+        if not self._jmcomic_client:
+            logger.warning(f"[JMComic] API client not initialized for user {user_name}")
+            yield event.plain_result(_format_api_key_not_configured("JMComic 漫画"))
             return
 
         try:
@@ -2694,3 +2837,101 @@ class CurrentCortexPlugin(Star):
                 f"📝 错误: {str(e)}\n"
                 f"💡 发送 /dglab help 查看帮助"
             )
+
+    @filter.command("apitest", alias={"连通测试", "接口测试"})
+    async def apitest_command(self, event: AstrMessageEvent):
+        """LeiZ API 接口连通性诊断
+
+        对全部 LeiZ 上游接口做一次真实鉴权探测，快速判断某接口异常
+        （而非代码问题）。所有用户可用。
+        """
+        message_str = event.message_str.strip()
+
+        if self._is_help_command(message_str):
+            yield event.plain_result(API_TEST_HELP_TEXT)
+            return
+
+        # 未配置统一 API Key：6 个客户端均为 None，无法做任何探测
+        if not self._leiz_api_key:
+            yield event.plain_result(_format_api_key_not_configured("接口连通性测试"))
+            return
+
+        yield event.plain_result("🔍 正在并行探测 LeiZ 接口，请稍候…")
+
+        # (显示名, 客户端实例, 最轻量只读调用)
+        # 注意：必须用每个客户端最省流量的只读请求，避免下载图片/音频
+        targets = [
+            ("Pixiv", self._api_client,
+             lambda c: c.fetch_images(num=1, size="regular")),
+            ("一言", self._hitokoto_client,
+             lambda c: c.fetch_hitokoto()),
+            ("天气", self._weather_client,
+             lambda c: c.fetch_weather("北京")),
+            ("男娘", self._femboy_client,
+             lambda c: c.fetch_femboy_image()),
+            ("点歌", self._netease_client,
+             lambda c: c.search_songs("在你的身边")),
+            ("JMComic", self._jmcomic_client,
+             lambda c: c.search("姐姐")),
+        ]
+
+        async def _probe(name, client, call):
+            """单接口探测。返回 (name, status, elapsed, extra)。
+
+            status: ok / http_err / net_err / skipped
+            extra: 正常为 None，异常为状态码或简短错误
+            """
+            if client is None:  # 兜底：理论上已被 _leiz_api_key 判定拦截
+                return (name, "skipped", 0.0, None)
+
+            start = time.time()
+            try:
+                await call(client)
+                elapsed = time.time() - start
+                return (name, "ok", elapsed, None)
+            except Exception as e:  # 捕获对应 *APIError（均带 status_code）
+                elapsed = time.time() - start
+                code = getattr(e, "status_code", 0)
+                if code:  # 非 0 = HTTP 状态码（401/402/5xx 等）
+                    return (name, "http_err", elapsed, f"HTTP {code}")
+                # 0 = 超时 / 网络错误
+                msg = str(e).strip().replace("\n", " ")
+                return (name, "net_err", elapsed, (msg[:40] + "…") if len(msg) > 40 else msg)
+
+        overall_start = time.time()
+        # 并行探测，避免串行最坏 6 × timeout
+        results = await asyncio.gather(*[_probe(n, c, f) for n, c, f in targets])
+        overall_elapsed = time.time() - overall_start
+
+        # 组装输出
+        status_icon = {
+            "ok": "🟢",
+            "http_err": "🟡",
+            "net_err": "🔴",
+            "skipped": "⚫",
+        }
+        lines = ["🔍 LeiZ API 接口连通性测试", "━━━━━━━━━━━━━━━━━━━━"]
+        lines.append(f"配置超时: {self._request_timeout}s | 接口数: {len(targets)}")
+        lines.append("")
+
+        ok_count = 0
+        for name, status, elapsed, extra in results:
+            icon = status_icon.get(status, "❓")
+            line = f"{icon} {name:<8} {elapsed:.2f}s"
+            if extra:
+                line += f"  {extra}"
+            lines.append(line)
+            if status == "ok":
+                ok_count += 1
+
+        abnormal = len(targets) - ok_count
+        lines.append("")
+        lines.append(
+            f"📊 汇总: {ok_count}/{len(targets)} 正常 · {abnormal} 异常 · "
+            f"总耗时 {overall_elapsed:.2f}s"
+        )
+
+        if abnormal:
+            lines.append("💡 红色为超时/网络问题，黄色为 HTTP 错误（如 401 鉴权失败）")
+
+        yield event.plain_result("\n".join(lines))

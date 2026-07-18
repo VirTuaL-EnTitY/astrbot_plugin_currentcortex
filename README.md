@@ -255,7 +255,7 @@ pip install aiohttp>=3.8.0 websockets>=10.0
 
 #### 配置要求
 
-使用此功能前，需要在插件配置面板中填写 `femboy_api_key`（x-api-key）。未配置时调用命令会提示错误。
+使用此功能前，需要在插件配置面板中填写 `leiz_api_key`（LeiZ API 统一密钥）。未配置时调用命令会提示错误。
 
 #### 使用示例
 
@@ -436,20 +436,22 @@ pip install aiohttp>=3.8.0 websockets>=10.0
 
 | 指令 | 说明 |
 | --- | --- |
-| `/dglab bind [服务器地址]`（或 `/电击 绑定`） | 绑定设备（生成二维码供 APP 扫描） |
-| `/dglab unbind`（或 `/电击 解绑`） | 解绑当前设备 |
-| `/dglab strength <A\|B> <0-200>`（或 `/电击 强度`） | 设置通道强度值 |
-| `/dglab up <A\|B> [步进]`（或 `/电击 增加`） | 增加强度（默认+5） |
-| `/dglab down <A\|B> [步进]`（或 `/电击 减少`） | 减少强度（默认-5） |
-| `/dglab shock <A\|B> [强度] [波形] [秒数]`（或 `/电击 开始`） | 开始电击（设置强度并发送波形） |
-| `/dglab stop [A\|B]`（或 `/电击 停止`） | 停止电击（强度归零+清空波形，不指定则停止全部） |
-| `/dglab pulse <A\|B> <预设名\|HEX> [秒数]`（或 `/电击 波形`） | 发送波形数据（默认5秒） |
-| `/dglab clear <A\|B>`（或 `/电击 清空`） | 清空波形队列 |
-| `/dglab feedback`（或 `/电击 反馈`） | 查看设备实时强度和反馈按钮状态 |
-| `/dglab permission [on\|off]`（或 `/电击 权限`） | 查看/切换权限隔离（默认开启） |
-| `/dglab status`（或 `/电击 状态`） | 查看绑定状态和连接状态 |
-| `/dglab info`（或 `/电击 信息`） | 查看详细设备信息 |
+| `/dglab bind [服务器地址]`（或 `/电击 绑定`） | 绑定新设备（生成二维码供 APP 扫描，支持多设备追加） |
+| `/dglab unbind [序号]`（或 `/电击 解绑`） | 解绑设备（多台时需指定序号） |
+| `/dglab strength [序号] <A\|B> <0-200>`（或 `/电击 强度`） | 设置通道强度值（序号省略则操作 #1） |
+| `/dglab up [序号] <A\|B> [步进]`（或 `/电击 增加`） | 增加强度（默认+5） |
+| `/dglab down [序号] <A\|B> [步进]`（或 `/电击 减少`） | 减少强度（默认-5） |
+| `/dglab shock [序号] <A\|B> [强度] [波形] [秒数]`（或 `/电击 开始`） | 开始电击（设置强度并发送波形） |
+| `/dglab stop [序号] [A\|B]`（或 `/电击 停止`） | 停止电击（强度归零+清空波形，不指定通道则停止该设备全部） |
+| `/dglab pulse [序号] <A\|B> <预设名\|HEX> [秒数]`（或 `/电击 波形`） | 发送波形数据（默认5秒） |
+| `/dglab clear [序号] <A\|B>`（或 `/电击 清空`） | 清空波形队列 |
+| `/dglab feedback [序号]`（或 `/电击 反馈`） | 查看设备实时强度和反馈按钮状态 |
+| `/dglab permission [on\|off]`（或 `/电击 权限`） | 查看/切换权限隔离（默认开启，user级：控制该用户全部设备） |
+| `/dglab status`（或 `/电击 状态`） | 查看全部设备的绑定和连接状态 |
+| `/dglab info`（或 `/电击 信息`） | 查看全部设备的详细信息 |
 | `/dglab help`（或 `/电击 帮助`） | 显示帮助信息 |
+
+> 💡 **多设备说明**：同一用户可绑定多台设备，用序号（1/2/3...）区分。序号可省略，默认操作 #1 设备。单设备用户无需关心序号，行为与单设备时完全一致。控制他人设备示例：`/dglab strength @用户ID 2 A 50`。
 
 #### 使用流程
 
@@ -491,8 +493,8 @@ pip install aiohttp>=3.8.0 websockets>=10.0
 | --- | --- | --- | --- |
 | `通道` | string | A 或 B | 必填，指定输出通道 |
 | `强度` | int | 0-200 | 可选，默认20 |
-| `波形` | string | 预设名 | 可选，默认pulse。可选: breathe, pulse, wave, tap, storm |
-| `秒数` | int | 1-30 | 可选，持续时间，默认5秒 |
+| `波形` | string | 预设名 | 可选，默认pulse。可选: breathe, pulse, wave, tap, heartbeat, needle, throb, chaos |
+| `秒数` | int | 1-60 | 可选，持续时间，默认5秒 |
 
 **波形控制参数（`/dglab pulse`）：**
 
@@ -500,7 +502,7 @@ pip install aiohttp>=3.8.0 websockets>=10.0
 | --- | --- | --- | --- |
 | `通道` | string | A 或 B | 必填，指定输出通道 |
 | `预设名/HEX` | string | 见下方 | 必填，波形预设名或16位HEX数据 |
-| `秒数` | int | 1-30 | 可选，持续时间，默认5秒 |
+| `秒数` | int | 1-60 | 可选，持续时间，默认5秒 |
 
 **可用波形预设：**
 
@@ -510,7 +512,10 @@ pip install aiohttp>=3.8.0 websockets>=10.0
 | `pulse` | 快速间歇脉冲 |
 | `wave` | 连续波浪起伏 |
 | `tap` | 短促有力的单次敲击 |
-| `storm` | 高频持续输出 |
+| `heartbeat` | 双拍心跳节奏（lub-dub） |
+| `needle` | 高频持续尖刺（针扎感） |
+| `throb` | 低频缓慢起伏（厚重深沉） |
+| `chaos` | 强弱频率随机交替（不可预测） |
 
 **绑定参数：**
 
@@ -587,6 +592,14 @@ pip install aiohttp>=3.8.0 websockets>=10.0
 
 **路径**：AstrBot 管理面板 → 插件管理 → astrbot\_plugin\_pixiv → 配置
 
+> 🔐 **【重要】LeiZ API 鉴权方式升级公告**
+>
+> 自即日起，LeiZ API 全面升级鉴权方式：**所有接口（含免费接口）均需在请求中携带 API Key**，请求头格式为 `x-api-key: <API-Key>`。未配置将导致 Pixiv、每日一言、天气查询、男娘图片、网易云音乐点歌、JMComic 漫画等全部 LeiZ 接口命令不可用。
+>
+> 请在下方配置项中填写 `leiz_api_key` 后保存并重启插件。
+>
+> **旧版配置迁移**：v1.3.x 及更早版本中针对男娘图片使用的 `femboy_api_key`（旧 `x-api-key`）已被废弃并合并为统一的 `leiz_api_key`。升级后如未填写 `leiz_api_key` 但保留了旧的 `femboy_api_key`，插件会自动将其作为统一 API Key 使用并提示迁移，建议尽快在配置面板改填到 `leiz_api_key` 字段。
+
 ### Pixiv 相关配置
 
 | 配置项 | 类型 | 默认值 | 说明 |
@@ -602,7 +615,7 @@ pip install aiohttp>=3.8.0 websockets>=10.0
 | 配置项 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `request_timeout` | int | 15 | API 请求超时时间（秒），影响所有功能 |
-| `femboy_api_key` | string | （空） | 男娘图片 API 密钥（x-api-key），**必填**才能使用 `/femboy` |
+| `leiz_api_key` | string | （空） | **LeiZ API 统一密钥**（请求头 `x-api-key`）。所有接口（含免费接口）均需携带，**必填**才能使用 Pixiv/一言/天气/男娘/点歌/JMComic 等全部 LeiZ 接口命令 |
 
 ### DG-LAB 配置
 
@@ -681,7 +694,7 @@ pip install aiohttp>=3.8.0 websockets>=10.0
 
 ### Q: `/femboy` 提示功能未启用？
 
-需要在插件配置面板中填写 `femboy_api_key` 字段（您的 x-api-key），保存配置后重启插件即可。
+需要在插件配置面板中填写 `leiz_api_key` 字段（LeiZ API 统一密钥），保存配置后重启插件即可。
 
 ### Q: 如何排除 AI 生成的 Pixiv 作品？
 
@@ -765,7 +778,7 @@ astrbot_plugin_currentcortex/
 - **PixivAPIClient**：Pixiv API 客户端，支持 GET/POST 请求，处理重定向和 JSON 响应
 - **HitokotoAPIClient**：一言 API 客户端，支持分类筛选
 - **WeatherAPIClient**：天气 API 客户端，解析当前天气和未来预报
-- **FemboyAPIClient**：男娘图片 API 客户端，需 x-api-key 认证
+- **FemboyAPIClient**：男娘图片 API 客户端，统一使用 `x-api-key` 鉴权
 - **NeteaseAPIClient**：网易云音乐 API 客户端，支持歌曲获取和搜索
 - **JMComicAPIClient**：JMComic 漫画 API 客户端，支持搜索、详情、章节图片获取
 - **CommandParser**：命令解析器，支持 `key:value` 格式参数和快捷语法
