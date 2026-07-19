@@ -1,0 +1,13 @@
+{
+  "name": "currentcortex",
+  "version": "1.4.0",
+  "description": "Pixiv、音乐、DG-LAB 与媒体解析综合插件（Qtine / OneBot v11 CQ 兼容）",
+  "author": "AstrBot Community",
+  "requires": [
+    "aiohttp",
+    "Pillow",
+    "qrcode[pil]",
+    "websockets>=10.0"
+  ],
+  "depends_on": []
+}

@@ -6,6 +6,8 @@
 
 本插件是一个集成了多种实用功能的 AstrBot 插件，专为提升聊天机器人交互体验而设计。通过简洁的命令接口，用户可以轻松获取各类内容和服务，并支持对 DG-LAB 设备进行完整的生命周期管理。
 
+> 同时提供 **Qtine / OneBot v11** 兼容包，见下方「Qtine 安装」。AstrBot 主入口及原有富媒体行为保持不变。
+
 ### ✨ 核心特性
 
 - **🎨 Pixiv 随机图片**：获取随机 Pixiv 图片，支持 R18 内容、标签筛选、关键词搜索、指定作者等
@@ -64,9 +66,25 @@ pip install aiohttp>=3.8.0 websockets>=10.0
 
 > ⚠️ **DG-LAB 功能需要 `websockets` 库**，请确保已安装。
 
+### Qtine 安装
+
+Qtine 使用当前加载器要求的标准外部插件结构。将本仓库中的 `qtine/` 目录复制（或软链接）到 Qtine 的外部插件目录，目录内必须保留 `main.py`、`data.json` 与 `requirements.txt`：
+
+```bash
+cp -a qtine/ /path/to/Qtine/plugins/currentcortex/
+# 请按实际安装目录调整；目录名应为 currentcortex，而不是 AstrBot 插件根目录。
+```
+
+Qtine 配置项会在插件配置面板中注册，包含 AstrBot `_conf_schema.json` 的所有默认参数。Qtine 的持久化 JSON 记录和 DG-LAB 二维码保存在 `qtine/data/`，不会依赖 Qtine 进程的工作目录。
+
+Qtine 富媒体通过 **OneBot v11 CQ 码**发送：图片为 `[CQ:image,...]`、语音为 `[CQ:record,...]`、下载文件为 `[CQ:file,...]`。Qtine 不负责媒体上传或能力探测，需使用支持本地 `file://` 和 CQ 码的 QQ OneBot 实现（例如已正确配置的 NapCat）。图片、音乐、媒体解析和 DG-LAB 二维码均会使用该通道；JMComic 的合并转发会降级为一条文本和顺序图片 CQ 码。请在目标 OneBot 实现中验证展示效果。
+
+> 音乐语音仍依赖系统 `ffmpeg`。若适配器不支持 record/file CQ 码，插件会保留文本播放链接或提示，但无法由 Qtine 代替适配器上传媒体。
+
 ### 系统要求
 
-- **AstrBot** >= 3.4.0
+- **AstrBot** >= 3.4.0（AstrBot 运行时）
+- **Qtine**（Qtine 兼容包运行时）
 - **Python** >= 3.10
 - **aiohttp** >= 3.8.0
 - **websockets** >= 10.0（DG-LAB 功能必需）
