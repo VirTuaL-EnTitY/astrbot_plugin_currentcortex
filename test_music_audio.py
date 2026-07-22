@@ -96,6 +96,7 @@ from astrbot_plugin_pixiv import main
 class TestPlugin:
     _compress_for_voice = main.CurrentCortexPlugin._compress_for_voice
     _download_source_audio_to_temp = main.CurrentCortexPlugin._download_source_audio_to_temp
+    _download_audio_to_temp = main.CurrentCortexPlugin._download_audio_to_temp
     _audio_extension = staticmethod(main.CurrentCortexPlugin._audio_extension)
     _build_audio_filename = classmethod(main.CurrentCortexPlugin._build_audio_filename.__func__)
     _cleanup_old_audio_files = staticmethod(main.CurrentCortexPlugin._cleanup_old_audio_files)
@@ -196,6 +197,37 @@ async def test_raw_download_preserves_bytes(temp_dir: Path):
         await runner.cleanup()
 
 
+async def test_voice_download_falls_back_to_source(temp_dir: Path):
+    payload = b"source-audio-for-fallback"
+
+    async def audio_handler(request):
+        return web.Response(body=payload, content_type="audio/mpeg")
+
+    app = web.Application()
+    app.router.add_get("/audio.mp3", audio_handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    port = site._server.sockets[0].getsockname()[1]
+    try:
+        with (
+            patch.object(main.tempfile, "gettempdir", return_value=str(temp_dir)),
+            patch.object(TestPlugin, "_compress_for_voice", return_value=None),
+        ):
+            result = await TestPlugin()._download_audio_to_temp(
+                f"http://127.0.0.1:{port}/audio.mp3", "Fallback Song"
+            )
+        assert result is not None
+        output = Path(result)
+        assert output.name.endswith("_source.mp3")
+        assert output.exists()
+        assert output.read_bytes() == payload
+        output.unlink()
+    finally:
+        await runner.cleanup()
+
+
 def test_file_command_parsing_and_extension():
     match = main.re.match(r"^(file|文件)\s+(.+)$", "文件 Amore", main.re.IGNORECASE)
     assert match is not None
@@ -212,11 +244,12 @@ def main_test():
         test_ffmpeg_failure_logs_stderr_and_removes_output(temp_dir)
         test_missing_ffmpeg_returns_none(temp_dir)
         run(test_raw_download_preserves_bytes(temp_dir))
+        run(test_voice_download_falls_back_to_source(temp_dir))
         test_file_command_parsing_and_extension()
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
-    print("✅ 音乐音频回归测试通过（6 项）")
+    print("✅ 音乐音频回归测试通过（7 项）")
 
 
 if __name__ == "__main__":
