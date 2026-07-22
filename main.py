@@ -1077,7 +1077,7 @@ def _format_api_key_not_configured(feature_name: str) -> str:
 
 @register(
     "astrbot_plugin_currentcortex",
-    "AstrBot Community",
+    "Rcst20",
     "CurrentCortex 综合插件 - Pixiv 图片、每日一言、天气查询、网易云音乐、JMComic 漫画、DG-LAB 设备管理及小红书/B站/抖音媒体解析等",
     "1.4.0",
 )
@@ -1240,6 +1240,7 @@ class CurrentCortexPlugin(Star):
 
     @filter.command("hitokoto", alias={"一言"})
     async def hitokoto_command(self, event: AstrMessageEvent):
+        """获取随机每日一言，可按分类筛选。"""
         user_name = event.get_sender_name()
         message_str = event.message_str.strip()
 
@@ -1317,6 +1318,7 @@ class CurrentCortexPlugin(Star):
 
     @filter.command("weather", alias={"天气"})
     async def weather_command(self, event: AstrMessageEvent):
+        """查询指定城市的实时天气信息。"""
         user_name = event.get_sender_name()
         message_str = event.message_str.strip()
 
@@ -1502,6 +1504,7 @@ class CurrentCortexPlugin(Star):
 
     @filter.command("femboy", alias={"男娘"})
     async def femboy_command(self, event: AstrMessageEvent):
+        """获取一张随机男娘图片。"""
         user_name = event.get_sender_name()
         message_str = event.message_str.strip()
 
@@ -1578,6 +1581,7 @@ class CurrentCortexPlugin(Star):
 
     @filter.command("music", alias={"音乐"})
     async def music_command(self, event: AstrMessageEvent):
+        """搜索网易云音乐并获取歌曲详情或音频。"""
         user_name = event.get_sender_name()
         message_str = event.message_str.strip()
 
@@ -1934,12 +1938,25 @@ class CurrentCortexPlugin(Star):
             if compressed:
                 return compressed
 
-            logger.warning(f"[Music] 压缩失败，取消发送原始音频: {temp_path}")
-            self._remove_file(temp_path)
-            return None
+            logger.warning(
+                "[Music] 语音压缩失败，回退发送原始音频（可能受平台大小/格式限制）: %s",
+                temp_path,
+            )
+            return temp_path
 
+        except asyncio.TimeoutError:
+            logger.warning("[Music] 下载音频超时（30秒）: %s", name)
+            if "temp_path" in locals():
+                self._remove_file(temp_path)
+            return None
         except Exception as e:
-            logger.warning(f"[Music] 下载音频异常: {e}")
+            logger.warning(
+                "[Music] 下载音频异常 [%s] %r: %s",
+                type(e).__name__,
+                e,
+                name,
+                exc_info=True,
+            )
             if "temp_path" in locals():
                 self._remove_file(temp_path)
             return None
@@ -2042,6 +2059,7 @@ class CurrentCortexPlugin(Star):
 
     @filter.command("pixiv", alias={"图片"})
     async def pixiv_command(self, event: AstrMessageEvent):
+        """获取或按条件筛选 Pixiv 随机图片。"""
         user_name = event.get_sender_name()
         message_str = event.message_str.strip()
 
@@ -2327,7 +2345,7 @@ class CurrentCortexPlugin(Star):
 
     @filter.command("jm", alias={"漫画"})
     async def jm_command(self, event: AstrMessageEvent):
-        """JMComic 漫画命令入口"""
+        """搜索 JMComic 漫画、查看详情或获取章节内容。"""
         user_name = event.get_sender_name()
         message_str = event.message_str.strip()
 
@@ -2613,7 +2631,7 @@ class CurrentCortexPlugin(Star):
 
     @filter.command("jmcommend", alias={"漫画推荐"})
     async def jmcommend_command(self, event: AstrMessageEvent):
-        """JMComic 随机推荐漫画"""
+        """随机推荐一部 JMComic 漫画。"""
         user_name = event.get_sender_name()
         logger.debug(f"[JMComic] 随机推荐请求 from {user_name}")
 
@@ -2718,6 +2736,7 @@ class CurrentCortexPlugin(Star):
 
     @filter.command("解析")
     async def media_parse_command(self, event: AstrMessageEvent):
+        """自动解析小红书、B站和抖音媒体链接。"""
         user_name = event.get_sender_name()
         message_str = event.message_str.strip()
         if self._is_help_command(message_str):
@@ -2741,6 +2760,7 @@ class CurrentCortexPlugin(Star):
 
     @filter.command("xhs", alias={"小红书"})
     async def xhs_parse_command(self, event: AstrMessageEvent):
+        """解析小红书链接中的媒体内容。"""
         message_str = event.message_str.strip()
         if self._is_help_command(message_str):
             yield event.plain_result("小红书解析: /xhs <链接>")
@@ -2758,6 +2778,7 @@ class CurrentCortexPlugin(Star):
 
     @filter.command("bilibili", alias={"B站", "b站"})
     async def bilibili_parse_command(self, event: AstrMessageEvent):
+        """解析 Bilibili 链接中的媒体内容。"""
         message_str = event.message_str.strip()
         if self._is_help_command(message_str):
             yield event.plain_result("B站解析: /bilibili <链接>")
@@ -2775,6 +2796,7 @@ class CurrentCortexPlugin(Star):
 
     @filter.command("douyin", alias={"抖音"})
     async def douyin_parse_command(self, event: AstrMessageEvent):
+        """解析抖音链接中的媒体内容。"""
         message_str = event.message_str.strip()
         if self._is_help_command(message_str):
             yield event.plain_result("抖音解析: /douyin <链接>")
@@ -2957,7 +2979,7 @@ class CurrentCortexPlugin(Star):
 
     @filter.command("dglab", alias={"电击"})
     async def dglab_command(self, event: AstrMessageEvent):
-        """DG-LAB设备管理命令入口"""
+        """管理、绑定和控制 DG-LAB 设备。"""
         if not getattr(self, "_pool_started", False):
             await self._connection_pool.start()
             if self._dglab_webui:
@@ -2979,11 +3001,7 @@ class CurrentCortexPlugin(Star):
 
     @filter.command("apitest", alias={"连通测试", "接口测试"})
     async def apitest_command(self, event: AstrMessageEvent):
-        """LeiZ API 接口连通性诊断
-
-        对全部 LeiZ 上游接口做一次真实鉴权探测，快速判断某接口异常
-        （而非代码问题）。所有用户可用。
-        """
+        """诊断 LeiZ API 上游接口的鉴权与连通状态。"""
         message_str = event.message_str.strip()
 
         if self._is_help_command(message_str):
