@@ -1079,7 +1079,7 @@ def _format_api_key_not_configured(feature_name: str) -> str:
     "astrbot_plugin_currentcortex",
     "Rcst20",
     "CurrentCortex 综合插件 - Pixiv 图片、每日一言、天气查询、网易云音乐、JMComic 漫画、DG-LAB 设备管理及小红书/B站/抖音媒体解析等",
-    "1.4.0",
+    "1.4.3",
 )
 class CurrentCortexPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
