@@ -101,6 +101,7 @@ class TestPlugin:
     _build_audio_filename = classmethod(main.CurrentCortexPlugin._build_audio_filename.__func__)
     _cleanup_old_audio_files = staticmethod(main.CurrentCortexPlugin._cleanup_old_audio_files)
     _remove_file = staticmethod(main.CurrentCortexPlugin._remove_file)
+    _parse_play_song_params = main.CurrentCortexPlugin._parse_play_song_params
     _leiz_api_key = "test-key"
 
 
@@ -236,6 +237,19 @@ def test_file_command_parsing_and_extension():
     assert TestPlugin()._audio_extension("flac", "https://cdn.example/song") == ".flac"
 
 
+def test_play_song_command_parsing():
+    plugin = TestPlugin()
+    # /点歌 <歌曲名>：等效于 /音乐 直接 <歌曲名>
+    assert plugin._parse_play_song_params("点歌 孤勇者") == "孤勇者"
+    assert plugin._parse_play_song_params("/点歌 孤勇者") == "孤勇者"
+    assert plugin._parse_play_song_params("/点歌  周杰伦 晴天") == "周杰伦 晴天"
+    # help / 空参数应返回 None
+    assert plugin._parse_play_song_params("点歌 help") is None
+    assert plugin._parse_play_song_params("点歌") is None
+    # 不应误吞 /音乐 命令的参数
+    assert plugin._parse_play_song_params("音乐 孤勇者") == "音乐 孤勇者"
+
+
 def main_test():
     temp_dir = Path(tempfile.mkdtemp(prefix="astrbot_music_test_"))
     try:
@@ -246,10 +260,11 @@ def main_test():
         run(test_raw_download_preserves_bytes(temp_dir))
         run(test_voice_download_falls_back_to_source(temp_dir))
         test_file_command_parsing_and_extension()
+        test_play_song_command_parsing()
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
-    print("✅ 音乐音频回归测试通过（7 项）")
+    print("✅ 音乐音频回归测试通过（8 项）")
 
 
 if __name__ == "__main__":
