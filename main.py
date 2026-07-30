@@ -1131,7 +1131,7 @@ _JM_CHAPTER_CURSOR_TTL = 30 * 60
     "astrbot_plugin_currentcortex",
     "Rcst20",
     "多功能 AstrBot 插件（CurrentCortex）—— Pixiv 随机图片 ·网易云点歌 ·JMComic 漫画 ·小红书/B站/抖音媒体解析 ·每日一言 ·天气 ·男娘 ·DG-LAB（郊狼） 设备管理 ·跨群聊记忆 ·按群聊开关。基于 LeiZ API。",
-    "1.5.2",
+    "1.5.3",
 )
 class CurrentCortexPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -1264,16 +1264,30 @@ class CurrentCortexPlugin(Star):
         self._user_store = UserStore(data_dir="data")
         self._permission_store = PermissionStore(data_dir="data")
 
-        webui_enabled = bool(config.get("dglab_webui_enabled", True))
+        webui_enabled = bool(config.get("dglab_webui_enabled", False))
+        webui_host = str(config.get("dglab_webui_host", "127.0.0.1")).strip()
         webui_port = int(config.get("dglab_webui_port", 9178))
         self._dglab_webui: Optional[DGLabWebUI] = None
         if webui_enabled:
+            # 安全：监听 0.0.0.0 表示暴露到公网，明确告警
+            if webui_host in ("0.0.0.0", "::"):
+                logger.warning(
+                    "[CurrentCortex] ⚠️ WebUI 监听地址为 %s，将暴露到公网！"
+                    "请确保已配置反向代理与访问控制，否则任何人都能访问注册/登录等接口。",
+                    webui_host,
+                )
             self._dglab_webui = DGLabWebUI(
                 connection_pool=self._connection_pool,
                 device_store=self._device_store,
                 user_store=self._user_store,
                 permission_store=self._permission_store,
+                host=webui_host,
                 port=webui_port,
+            )
+        else:
+            logger.info(
+                "[CurrentCortex] WebUI 未启用（默认关闭）。如需启用，请在配置中开启 "
+                "dglab_webui_enabled，并注意 WebUI 安全（建议仅本地或经反代+鉴权后公网访问）。"
             )
 
         if server_url:

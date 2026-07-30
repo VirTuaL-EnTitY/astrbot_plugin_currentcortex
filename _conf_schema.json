@@ -60,9 +60,14 @@
     "default": false
   },
   "dglab_webui_enabled": {
-    "description": "是否启用 CurrentCortex WebUI 控制面板（浏览器远程控制界面）",
+    "description": "是否启用 CurrentCortex WebUI 控制面板（浏览器远程控制界面）。出于安全考虑默认关闭；需在了解风险后手动开启。开启后建议将 dglab_webui_host 保持为 127.0.0.1，仅在本地或经反向代理+鉴权后暴露到公网",
     "type": "bool",
-    "default": true
+    "default": false
+  },
+  "dglab_webui_host": {
+    "description": "CurrentCortex WebUI 监听地址。默认 127.0.0.1（仅本机访问）；如需监听公网请显式设为 0.0.0.0，并务必确保前面有反向代理与访问控制",
+    "type": "string",
+    "default": "127.0.0.1"
   },
   "dglab_webui_port": {
     "description": "CurrentCortex WebUI 监听端口号",

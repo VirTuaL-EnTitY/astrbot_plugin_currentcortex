@@ -434,7 +434,13 @@ pip install websockets>=10.0   # 仅 DG-LAB 功能需要
 
 #### WebUI 控制面板
 
-启用 `dglab_webui_enabled`（默认开启）后，插件会在 `dglab_webui_port`（默认 9178）启动一个浏览器远程控制界面，可在网页上查看/控制设备，Material Design 3 风格。
+启用 `dglab_webui_enabled` 后，插件会在 `dglab_webui_host`:`dglab_webui_port`（默认 `127.0.0.1:9178`）启动一个浏览器远程控制界面，可在网页上查看/控制设备，Material Design 3 风格。
+
+> ⚠️ **WebUI 安全（重要）**
+> - 自 v1.5.3 起，**WebUI 默认关闭**（`dglab_webui_enabled` 默认 `false`），需手动开启。
+> - 默认监听地址为 `127.0.0.1`（仅本机访问）。**如需公网访问，请将 `dglab_webui_host` 显式设为 `0.0.0.0`，并务必在前面部署反向代理与访问控制**（如 Nginx + Basic Auth / IP 白名单）。
+> - WebUI 内置独立的用户注册/登录系统，**与机器人本体/平台账号无关**：任何能访问该端口的人都能注册账号。不要在无防护的情况下直接暴露到公网。
+> - 建议仅在本机使用，或仅在内网/经反代+鉴权后对外提供。
 
 #### 高级特性
 
@@ -562,7 +568,8 @@ pip install websockets>=10.0   # 仅 DG-LAB 功能需要
 | `dglab_server_url` | string | （空） | 中转服务器地址（如 `ws://192.168.1.100:9999`） |
 | `dglab_heartbeat_interval` | int | 60 | 心跳间隔（秒），建议 30-120 |
 | `dglab_auto_connect` | bool | false | 插件启动时是否自动连接（一般设为 false） |
-| `dglab_webui_enabled` | bool | true | 是否启用 WebUI 控制面板 |
+| `dglab_webui_enabled` | bool | false | 是否启用 WebUI 控制面板（**默认关闭**；需了解风险后手动开启） |
+| `dglab_webui_host` | string | 127.0.0.1 | WebUI 监听地址（默认仅本机；公网需显式设为 `0.0.0.0` 并加反代+鉴权） |
 | `dglab_webui_port` | int | 9178 | WebUI 监听端口 |
 
 <details>
@@ -779,5 +786,5 @@ astrbot_plugin_currentcortex/
 
 ---
 
-**版本**：v1.5.2  
+**版本**：v1.5.3  
 **仓库**：[GitHub](https://github.com/backrooms-yrc/astrbot_plugin_currentcortex)

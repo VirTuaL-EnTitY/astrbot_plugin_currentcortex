@@ -24,6 +24,17 @@ from .dglab_email_store import EmailStore
 from .dglab_turnstile_store import TurnstileStore
 import asyncio
 import json as _json
+import re
+
+# WebUI 用户名安全字符集：字母/数字/下划线/连字符/中文，2-20 字符。
+# 拒绝路径分隔符(/ \\)、点号序列(..)、引号、尖括号等，防止头像文件名路径穿越
+# 与前端 onclick/属性注入导致的 XSS。
+_USERNAME_RE = re.compile(r"^[A-Za-z0-9_\u4e00-\u9fa5-]{2,20}$")
+
+
+def _is_valid_username(username: str) -> bool:
+    """校验用户名是否符合安全字符集。"""
+    return bool(username and _USERNAME_RE.match(username))
 
 
 class DGLabWebUI:
@@ -33,7 +44,7 @@ class DGLabWebUI:
         device_store: DeviceStore,
         user_store: UserStore,
         permission_store: PermissionStore,
-        host: str = "0.0.0.0",
+        host: str = "127.0.0.1",
         port: int = 9800,
     ):
         self._pool = connection_pool
@@ -233,10 +244,15 @@ class DGLabWebUI:
             return web.json_response(
                 {"error": "用户名长度需在2-20字符之间"}, status=400
             )
+        # 安全：限制用户名字符集，防止路径分隔符/引号/尖括号等引发穿越或 XSS
+        if not _is_valid_username(username):
+            return web.json_response(
+                {"error": "用户名仅允许字母、数字、下划线、连字符和中文"},
+                status=400,
+            )
         if len(password) < 6:
             return web.json_response({"error": "密码长度不能少于6位"}, status=400)
         # Email format validation
-        import re
 
         if not re.match(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", email):
             return web.json_response({"error": "邮箱格式不正确"}, status=400)
@@ -673,12 +689,34 @@ class DGLabWebUI:
         )
 
     async def _handle_avatar_serve(self, request: web.Request) -> web.Response:
+        # 安全：头像接口补鉴权（与多数接口一致）
+        if not self._auth_user(request):
+            return web.json_response({"error": "未登录"}, status=401)
         target = request.match_info["username"]
-        avatars_dir = os.path.join(self._user_store._data_dir, "avatars")
+        avatars_dir = os.path.realpath(
+            os.path.join(self._user_store._data_dir, "avatars")
+        )
+        # 安全校验：拒绝含路径分隔符 / 父目录引用 / 绝对路径的用户名，
+        # 并用 realpath 归一化后校验最终路径仍位于 avatars_dir 之内，防止路径穿越。
+        if (
+            not target
+            or target in (".", "..")
+            or "/" in target
+            or "\\" in target
+            or os.path.isabs(target)
+            or ":" in target
+            or ".." in os.path.normpath(target).split(os.sep)
+        ):
+            return web.json_response({"error": "非法用户名"}, status=400)
         # Try common extensions
         for ext in ("png", "jpg", "webp"):
-            filepath = os.path.join(avatars_dir, f"{target}.{ext}")
-            if os.path.exists(filepath):
+            filepath = os.path.realpath(os.path.join(avatars_dir, f"{target}.{ext}"))
+            try:
+                if os.path.commonpath([avatars_dir, filepath]) != avatars_dir:
+                    continue
+            except ValueError:
+                continue
+            if os.path.isfile(filepath):
                 mime_map = {
                     "png": "image/png",
                     "jpg": "image/jpeg",
@@ -1176,12 +1214,23 @@ class DGLabWebUI:
         file_name = body.get("file_name", "file")
         if not file_data:
             return web.json_response({"error": "无文件数据"}, status=400)
+        # 安全：扩展名白名单 + 大小上限，防止上传任意类型/超大文件
+        ext = os.path.splitext(file_name)[1].lower() if file_name else ""
+        allowed_exts = {
+            ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg",
+            ".mp3", ".wav", ".ogg", ".mp4", ".webm",
+            ".pdf", ".txt",
+        }
+        if ext not in allowed_exts:
+            return web.json_response(
+                {"error": f"不支持的文件类型: {ext or '(无扩展名)'}，仅允许图片/音频/视频/pdf/txt"},
+                status=400,
+            )
         # Save file to data/chat_files/
         import uuid
 
         chat_files_dir = os.path.join(self._user_store._data_dir, "chat_files")
         os.makedirs(chat_files_dir, exist_ok=True)
-        ext = os.path.splitext(file_name)[1] if file_name else ""
         file_id = uuid.uuid4().hex[:12]
         file_path = os.path.join(chat_files_dir, f"{file_id}{ext}")
         # Decode base64
@@ -1189,6 +1238,15 @@ class DGLabWebUI:
             file_bytes = base64.b64decode(
                 file_data.split(",")[-1] if "," in file_data else file_data
             )
+        except Exception as e:
+            return web.json_response({"error": f"文件解码失败: {e}"}, status=400)
+        # 安全：限制单文件 10MB（解码后）
+        max_size = 10 * 1024 * 1024
+        if len(file_bytes) > max_size:
+            return web.json_response(
+                {"error": f"文件过大（{len(file_bytes)} 字节），上限 10MB"}, status=413
+            )
+        try:
             with open(file_path, "wb") as f:
                 f.write(file_bytes)
         except Exception as e:
@@ -1205,6 +1263,9 @@ class DGLabWebUI:
         )
 
     async def _handle_chat_file_serve(self, request: web.Request) -> web.Response:
+        # 安全：聊天文件下载补鉴权（已登录才允许下载，避免任意人凭 file_id 取文件）
+        if not self._auth_user(request):
+            return web.json_response({"error": "未登录"}, status=401)
         filename = request.match_info["filename"]
         chat_files_dir = os.path.realpath(
             os.path.join(self._user_store._data_dir, "chat_files")
@@ -1317,9 +1378,14 @@ class DGLabWebUI:
             return web.json_response(
                 {"error": "用户名长度需在2-20字符之间"}, status=400
             )
+        # 安全：限制用户名字符集，防止路径分隔符/引号/尖括号等引发穿越或 XSS
+        if not _is_valid_username(username):
+            return web.json_response(
+                {"error": "用户名仅允许字母、数字、下划线、连字符和中文"},
+                status=400,
+            )
         if len(password) < 6:
             return web.json_response({"error": "密码长度不能少于6位"}, status=400)
-        import re
 
         if not re.match(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", email):
             return web.json_response({"error": "邮箱格式不正确"}, status=400)
@@ -2898,33 +2964,35 @@ function renderDevices(){
   if(!devices.length){list.innerHTML='';empty.style.display='block';return;}
   empty.style.display='none';
   list.innerHTML=devices.map(d=>{
-    const ownerTag=d.is_permitted?`<span class="owner-tag">来自 ${d.owner}</span>`:'';
+    const ownerTag=d.is_permitted?`<span class="owner-tag">来自 ${escapeHtml(d.owner)}</span>`:'';
     // 同一用户多设备时显示 #序号 区分
-    const idxTag=d.device_index?`<span class="device-index">#${d.device_index}</span>`:'';
+    const idxTag=d.device_index?`<span class="device-index">#${escapeHtml(d.device_index)}</span>`:'';
     const uid=d.user_id,did=d.device_id;
+    // 安全：uid/did 同时用于属性与 onclick JS 字符串，分别准备两套转义值
+    const uida=escapeHtml(uid),dida=escapeHtml(did),uidc=escAttr(uid),didc=escAttr(did);
     return `<div class="device-card">
       <div class="device-header">
-        <span class="device-id">${uid}${idxTag}${ownerTag}</span>
+        <span class="device-id">${uida}${idxTag}${ownerTag}</span>
         <span class="status-badge ${statusClass(d.status)}">${statusText(d.status)}</span>
       </div>
       <div class="channel-section">
-        <div class="channel-label"><span class="channel-name">A 通道</span><span>${d.strength_a} / ${d.limit_a}</span></div>
+        <div class="channel-label"><span class="channel-name">A 通道</span><span>${escapeHtml(d.strength_a)} / ${escapeHtml(d.limit_a)}</span></div>
         <div class="slider-row">
-          <input type="range" min="0" max="${d.limit_a}" value="${d.strength_a}" data-uid="${uid}" data-did="${did}" data-ch="A" aria-label="A通道强度" oninput="this.parentElement.querySelector('.slider-value').textContent=this.value" onchange="setStrength(this)">
-          <span class="slider-value">${d.strength_a}</span>
+          <input type="range" min="0" max="${escapeHtml(d.limit_a)}" value="${escapeHtml(d.strength_a)}" data-uid="${uida}" data-did="${dida}" data-ch="A" aria-label="A通道强度" oninput="this.parentElement.querySelector('.slider-value').textContent=this.value" onchange="setStrength(this)">
+          <span class="slider-value">${escapeHtml(d.strength_a)}</span>
         </div>
       </div>
       <div class="channel-section">
-        <div class="channel-label"><span class="channel-name">B 通道</span><span>${d.strength_b} / ${d.limit_b}</span></div>
+        <div class="channel-label"><span class="channel-name">B 通道</span><span>${escapeHtml(d.strength_b)} / ${escapeHtml(d.limit_b)}</span></div>
         <div class="slider-row">
-          <input type="range" min="0" max="${d.limit_b}" value="${d.strength_b}" data-uid="${uid}" data-did="${did}" data-ch="B" aria-label="B通道强度" oninput="this.parentElement.querySelector('.slider-value').textContent=this.value" onchange="setStrength(this)">
-          <span class="slider-value">${d.strength_b}</span>
+          <input type="range" min="0" max="${escapeHtml(d.limit_b)}" value="${escapeHtml(d.strength_b)}" data-uid="${uida}" data-did="${dida}" data-ch="B" aria-label="B通道强度" oninput="this.parentElement.querySelector('.slider-value').textContent=this.value" onchange="setStrength(this)">
+          <span class="slider-value">${escapeHtml(d.strength_b)}</span>
         </div>
       </div>
       <div class="duration-row" style="display:flex;align-items:center;gap:8px;margin:8px 0 4px">
         <span class="material-symbols-outlined" style="font-size:18px;opacity:.7">timer</span>
         <span style="font-size:.85rem;opacity:.8">持续时长</span>
-        <select class="pulse-duration" data-uid="${uid}" data-did="${did}" aria-label="波形持续时长" style="flex:1;padding:6px 8px;border-radius:var(--md-sys-shape-corner-small);border:1px solid var(--md-sys-color-outline-variant);background:var(--md-sys-color-surface-container);color:var(--md-sys-color-on-surface);font-size:.85rem">
+        <select class="pulse-duration" data-uid="${uida}" data-did="${dida}" aria-label="波形持续时长" style="flex:1;padding:6px 8px;border-radius:var(--md-sys-shape-corner-small);border:1px solid var(--md-sys-color-outline-variant);background:var(--md-sys-color-surface-container);color:var(--md-sys-color-on-surface);font-size:.85rem">
           <option value="5">5 秒</option>
           <option value="10" selected>10 秒</option>
           <option value="15">15 秒</option>
@@ -2933,8 +3001,8 @@ function renderDevices(){
         </select>
       </div>
       <div class="btn-row">
-        ${PRESETS.map(p=>`<button class="md-btn md-btn-tonal" onclick="sendPulse('${uid}','${did}','A','${p.id}')"><span class="material-symbols-outlined" style="font-size:18px">${p.icon}</span>${p.name} A</button><button class="md-btn md-btn-tonal" onclick="sendPulse('${uid}','${did}','B','${p.id}')"><span class="material-symbols-outlined" style="font-size:18px">${p.icon}</span>${p.name} B</button>`).join('')}
-        <button class="md-btn md-btn-error" onclick="stopDevice('${uid}','${did}')"><span class="material-symbols-outlined" style="font-size:18px">stop_circle</span>停止全部</button>
+        ${PRESETS.map(p=>`<button class="md-btn md-btn-tonal" onclick="sendPulse('${uidc}','${didc}','A','${escAttr(p.id)}')"><span class="material-symbols-outlined" style="font-size:18px">${escapeHtml(p.icon)}</span>${escapeHtml(p.name)} A</button><button class="md-btn md-btn-tonal" onclick="sendPulse('${uidc}','${didc}','B','${escAttr(p.id)}')"><span class="material-symbols-outlined" style="font-size:18px">${escapeHtml(p.icon)}</span>${escapeHtml(p.name)} B</button>`).join('')}
+        <button class="md-btn md-btn-error" onclick="stopDevice('${uidc}','${didc}')"><span class="material-symbols-outlined" style="font-size:18px">stop_circle</span>停止全部</button>
       </div>
     </div>`;
   }).join('');
@@ -2966,18 +3034,18 @@ async function loadPlaza(){
   list.innerHTML=r.devices.map(d=>{
     const nick=d.nickname||d.username;
     const avatarHtml=d.avatar
-      ?`<img src="${d.avatar}" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`
+      ?`<img src="${escapeHtml(d.avatar)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`
       :`<span class="material-symbols-outlined">person</span>`;
     // allow_requests=false 时显示“不接受申请”，申请按钮禁用
     const canReq=d.allow_requests!==false;
     const btnHtml=canReq
-      ?`<button class="md-btn md-btn-tonal" onclick="requestControl('${d.username}')"><span class="material-symbols-outlined" style="font-size:18px">send</span>申请控制</button>`
+      ?`<button class="md-btn md-btn-tonal" onclick="requestControl('${escAttr(d.username)}')"><span class="material-symbols-outlined" style="font-size:18px">send</span>申请控制</button>`
       :`<span class="md-body-small on-surface-variant" style="opacity:.6">不接受申请</span>`;
     return `<div class="plaza-card">
     <div class="plaza-info">
       <div class="plaza-avatar">${avatarHtml}</div>
       <div>
-        <div class="md-title-medium">${nick}</div>
+        <div class="md-title-medium">${escapeHtml(nick)}</div>
         <div class="md-body-medium on-surface-variant"><span class="status-badge ${statusClass(d.status)}" style="margin-left:0">${statusText(d.status)}</span></div>
       </div>
     </div>
@@ -3023,13 +3091,13 @@ function renderPending(pending){
   empty.style.display='none';
   list.innerHTML=pending.map(r=>`<div class="request-card">
     <div class="request-header">
-      <span class="md-title-medium">${r.from_username}</span>
+      <span class="md-title-medium">${escapeHtml(r.from_username)}</span>
       <span class="md-body-medium on-surface-variant">${timeAgo(r.created_at)}</span>
     </div>
     <div class="md-body-medium on-surface-variant">请求控制你的设备</div>
     <div class="request-actions">
-      <button class="md-btn md-btn-filled" onclick="openApproveDialog('${r.request_id}')">通过</button>
-      <button class="md-btn md-btn-outlined" onclick="rejectRequest('${r.request_id}')">拒绝</button>
+      <button class="md-btn md-btn-filled" onclick="openApproveDialog('${escAttr(r.request_id)}')">通过</button>
+      <button class="md-btn md-btn-outlined" onclick="rejectRequest('${escAttr(r.request_id)}')">拒绝</button>
     </div>
   </div>`).join('');
 }
@@ -3040,12 +3108,12 @@ function renderGranted(granted){
   empty.style.display='none';
   list.innerHTML=granted.map(r=>`<div class="request-card">
     <div class="request-header">
-      <span class="md-title-medium">${r.from_username}</span>
+      <span class="md-title-medium">${escapeHtml(r.from_username)}</span>
       <span class="md-body-medium on-surface-variant">${expiresLabel(r.expires_at)}</span>
     </div>
     <div class="md-body-medium on-surface-variant">授权时长: ${durationLabel(r.duration_key)}</div>
     <div class="request-actions">
-      <button class="md-btn md-btn-error" onclick="revokePermission('${r.request_id}')">
+      <button class="md-btn md-btn-error" onclick="revokePermission('${escAttr(r.request_id)}')">
         <span class="material-symbols-outlined" style="font-size:18px">block</span>撤销
       </button>
     </div>
@@ -3113,7 +3181,7 @@ async function loadProfile(){
 function updateAvatarPreview(url){
   const container=document.getElementById('profile-avatar-preview');
   if(url){
-    container.innerHTML=`<img src="${url}?t=${Date.now()}" onerror="this.parentElement.innerHTML='<span class=\\'material-symbols-outlined\\'>person</span>'" alt="avatar">`;
+    container.innerHTML=`<img src="${escapeHtml(url)}?t=${Date.now()}" onerror="this.parentElement.innerHTML='<span class=\\'material-symbols-outlined\\'>person</span>'" alt="avatar">`;
   }else{
     container.innerHTML='<span class="material-symbols-outlined">person</span>';
   }
@@ -3323,14 +3391,14 @@ function renderPosts(posts){
   empty.style.display='none';
   list.innerHTML=posts.map(p=>{
     const avatarHtml=p.author_avatar
-      ?`<img src="${p.author_avatar}" style="width:32px;height:32px;border-radius:50%;object-fit:cover">`
+      ?`<img src="${escapeHtml(p.author_avatar)}" style="width:32px;height:32px;border-radius:50%;object-fit:cover">`
       :`<span class="material-symbols-outlined" style="font-size:20px">person</span>`;
     const nickname=p.author_nickname||p.author;
-    return `<div class="post-card" onclick="navigateToPost('${p.post_id}')">
+    return `<div class="post-card" onclick="navigateToPost('${escAttr(p.post_id)}')">
       <div class="post-card-title">${escapeHtml(p.title||'无标题')}</div>
       <div class="post-card-summary">${escapeHtml(p.summary||'')}</div>
       <div class="post-card-footer">
-        <div class="post-card-author" onclick="event.stopPropagation();navigateToUser('${p.author}')">
+        <div class="post-card-author" onclick="event.stopPropagation();navigateToUser('${escAttr(p.author)}')">
           <div class="post-author-avatar">${avatarHtml}</div>
           <span>${escapeHtml(nickname)}</span>
         </div>
@@ -3344,9 +3412,18 @@ function renderPosts(posts){
 }
 
 function escapeHtml(text){
+  if(text===null||text===undefined)return '';
   const d=document.createElement('div');
-  d.textContent=text;
-  return d.innerHTML;
+  d.textContent=String(text);
+  // textContent->innerHTML 会编码 & < >，但不会编码引号；
+  // 额外编码 " 和 '，使其在 HTML 属性上下文（如 src="..."）中也安全。
+  return d.innerHTML.replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+// 转义用于内联事件属性 / JS 字符串字面量（onclick="fn('${x}')"）的值，
+// 防止单引号 / 双引号 / 反斜杠 逃逸出 JS 字符串导致任意代码执行。
+function escAttr(s){
+  if(s===null||s===undefined)return '';
+  return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
 function searchPostsDebounced(){
@@ -3382,17 +3459,17 @@ async function loadPostDetail(postId){
   if(!r||!r.post){container.innerHTML='<p class="on-surface-variant">帖子不存在或已被删除</p>';return;}
   const p=r.post;
   const avatarHtml=p.author_avatar
-    ?`<img src="${p.author_avatar}" style="width:40px;height:40px;border-radius:50%;object-fit:cover">`
+    ?`<img src="${escapeHtml(p.author_avatar)}" style="width:40px;height:40px;border-radius:50%;object-fit:cover">`
     :`<span class="material-symbols-outlined" style="font-size:24px">person</span>`;
   const nickname=p.author_nickname||p.author;
   const isMe=currentUser&&p.author===currentUser.username;
-  const deleteBtn=isMe?`<button class="md-btn md-btn-text" onclick="deletePostFromDetail('${p.post_id}')" style="margin-left:auto"><span class="material-symbols-outlined" style="font-size:18px">delete</span>删除</button>`:'';
+  const deleteBtn=isMe?`<button class="md-btn md-btn-text" onclick="deletePostFromDetail('${escAttr(p.post_id)}')" style="margin-left:auto"><span class="material-symbols-outlined" style="font-size:18px">delete</span>删除</button>`:'';
   const contentHtml=renderMarkdownContent(p.content||'');
   container.innerHTML=`
     <div class="post-detail-header">
       <h1 class="md-display-medium" style="font-size:1.6rem;margin-bottom:12px">${escapeHtml(p.title||'无标题')}</h1>
       <div class="post-detail-meta">
-        <div class="post-card-author" onclick="navigateToUser('${p.author}')" style="cursor:pointer">
+        <div class="post-card-author" onclick="navigateToUser('${escAttr(p.author)}')" style="cursor:pointer">
           <div class="post-author-avatar">${avatarHtml}</div>
           <span style="font-weight:500">${escapeHtml(nickname)}</span>
         </div>
@@ -3504,7 +3581,7 @@ async function loadUserProfile(username){
   const r=await api('GET','/api/user/'+encodeURIComponent(username));
   if(!r){container.innerHTML='<p class="on-surface-variant">用户不存在</p>';return;}
   const avatarHtml=r.avatar
-    ?`<img src="${r.avatar}" style="width:80px;height:80px;border-radius:50%;object-fit:cover">`
+    ?`<img src="${escapeHtml(r.avatar)}" style="width:80px;height:80px;border-radius:50%;object-fit:cover">`
     :`<div style="width:80px;height:80px;border-radius:50%;background:var(--md-sys-color-surface-variant);display:flex;align-items:center;justify-content:center"><span class="material-symbols-outlined" style="font-size:40px">person</span></div>`;
   const genderIcon=r.gender==='male'?'male':r.gender==='female'?'female':'';
   const genderHtml=genderIcon?`<span class="material-symbols-outlined" style="font-size:18px;color:var(--md-sys-color-primary)">${genderIcon}</span>`:'';
@@ -3560,12 +3637,12 @@ function renderAdminUsers(users){
       <div class="admin-user-info">
         <div class="admin-user-avatar"><span class="material-symbols-outlined">person</span></div>
         <div class="admin-user-details">
-          <span class="admin-user-name">${u.username} ${roleBadge}</span>
-          <span class="admin-user-meta">邮箱: ${u.email||'-'} | ${u.email_verified?'✓ 已验证':'✗ 未验证'} | 注册: ${createdDate}</span>
+          <span class="admin-user-name">${escapeHtml(u.username)} ${roleBadge}</span>
+          <span class="admin-user-meta">邮箱: ${escapeHtml(u.email||'-')} | ${u.email_verified?'✓ 已验证':'✗ 未验证'} | 注册: ${createdDate}</span>
         </div>
       </div>
       <div class="admin-actions">
-        <select class="admin-select" aria-label="设置${u.username}的角色" onchange="setUserRole('${u.username}',this.value)" ${u.username===currentUser.username?'disabled':''}>
+        <select class="admin-select" aria-label="设置${escapeHtml(u.username)}的角色" onchange="setUserRole('${escAttr(u.username)}',this.value)" ${u.username===currentUser.username?'disabled':''}>
           <option value="user" ${u.role==='user'?'selected':''}>普通用户</option>
           <option value="admin" ${u.role==='admin'?'selected':''}>管理员</option>
         </select>
@@ -4076,6 +4153,9 @@ function renderDocs(md){
 }
 
 function inlineFormat(text){
+  // 安全：入口先转义，再做 bold/code 替换——
+  // 这样 markdown 正文（h1-3/p/li/blockquote）不会原样注入用户 HTML。
+  text=escapeHtml(text);
   // Bold
   text=text.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');
   // Inline code
@@ -4089,7 +4169,7 @@ function renderDocsToc(toc){
   let html='<div class="docs-toc-title">目录</div><ul>';
   toc.forEach(item=>{
     const cls=item.level===1?'toc-h1':item.level===2?'toc-h2':'toc-h3';
-    html+='<li><a class="'+cls+'" data-doc-id="'+item.id+'" onclick="scrollToDoc(\''+item.id+'\')">'+item.text+'</a></li>';
+    html+='<li><a class="'+cls+'" data-doc-id="'+escapeHtml(item.id)+'" onclick="scrollToDoc(\''+escAttr(item.id)+'\')">'+escapeHtml(item.text)+'</a></li>';
   });
   html+='</ul>';
   el.innerHTML=html;
@@ -4252,12 +4332,12 @@ function renderChatConversations(){
     const name=isGroup?escapeHtml(c.name||'群组'):escapeHtml(c.other_nickname||c.other_user||'未知');
     const avatarHtml=isGroup
       ?`<span class="material-symbols-outlined">groups</span>`
-      :(c.other_avatar?`<img src="${c.other_avatar}?t=${Date.now()}" onerror="this.outerHTML='<span class=\\'material-symbols-outlined\\'>person</span>'">`:`<span class="material-symbols-outlined">person</span>`);
+      :(c.other_avatar?`<img src="${escapeHtml(c.other_avatar)}?t=${Date.now()}" onerror="this.outerHTML='<span class=\\'material-symbols-outlined\\'>person</span>'">`:`<span class="material-symbols-outlined">person</span>`);
     const lastMsg=c.last_message?formatChatMsgPreview(c.last_message):'';
     const timeStr=c.last_message?timeAgo(c.last_message.created_at):'';
     const unread=c.unread_count?`<span class="chat-unread-badge">${c.unread_count}</span>`:'';
     const active=chatCurrentConv===c.conversation_id?'active':'';
-    return `<div class="chat-conv-item ${active}" onclick="openChatConversation('${c.conversation_id}')">
+    return `<div class="chat-conv-item ${active}" onclick="openChatConversation('${escAttr(c.conversation_id)}')">
       <div class="chat-conv-avatar">${avatarHtml}</div>
       <div class="chat-conv-info"><div class="chat-conv-name">${name}</div><div class="chat-conv-last">${lastMsg}</div></div>
       <div class="chat-conv-meta"><span class="chat-conv-time">${timeStr}</span>${unread}</div>
@@ -4336,7 +4416,7 @@ function renderChatMessages(){
     if(m.msg_type==='text'){
       contentHtml=formatChatText(m.content);
     }else if(m.msg_type==='voice'){
-      contentHtml=`<div class="chat-msg-voice" onclick="playVoice(this,'${m.file_url||''}')">
+      contentHtml=`<div class="chat-msg-voice" onclick="playVoice(this,'${escAttr(m.file_url||'')}')">
         <span class="material-symbols-outlined" style="font-size:20px">play_circle</span>
         <div class="chat-msg-voice-bar">${Array(8).fill(0).map((_,i)=>`<span style="animation-delay:${i*0.1}s"></span>`).join('')}</div>
         <span class="chat-msg-voice-duration">${m.voice_duration||0}s</span>
@@ -4344,7 +4424,7 @@ function renderChatMessages(){
     }else if(m.msg_type==='file'){
       const isImage=/\\.(jpg|jpeg|png|gif|webp|svg)$/i.test(m.file_name||'');
       if(isImage){
-        contentHtml=`<img class="chat-msg-image" src="${m.file_url||''}" onclick="viewChatImage(this.src)" loading="lazy" alt="${escapeHtml(m.file_name||'')}">`;
+        contentHtml=`<img class="chat-msg-image" src="${escapeHtml(m.file_url||'')}" onclick="viewChatImage(this.src)" loading="lazy" alt="${escapeHtml(m.file_name||'')}">`;
       }else{
         const icon=getFileIcon(m.file_name||'');
         contentHtml=`<div class="chat-msg-file"><span class="material-symbols-outlined chat-msg-file-icon">${icon}</span><div class="chat-msg-file-info"><span class="chat-msg-file-name">${escapeHtml(m.file_name||'文件')}</span><span class="chat-msg-file-size">${formatFileSize(m.file_size||0)}</span></div></div>`;
@@ -4365,8 +4445,9 @@ function formatChatText(text){
   html=html.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');
   // Italic: *text*
   html=html.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g,'<em>$1</em>');
-  // Links
-  html=html.replace(/(https?:\/\/[^\s<]+)/g,'<a href="$1" target="_blank" rel="noopener">$1</a>');
+  // Links：URL 字符集排除引号/尖括号/空格，且 escapeHtml 已把整体转义，
+  // href 内不会出现裸引号，防止属性逃逸。
+  html=html.replace(/(https?:\/\/[^\s<"'`]+)/g,'<a href="$1" target="_blank" rel="noopener nofollow">$1</a>');
   return html;
 }
 
@@ -4522,11 +4603,11 @@ function renderChatFriends(){
   if(!chatFriends.length){list.innerHTML='';empty.style.display='block';return;}
   empty.style.display='none';
   list.innerHTML=chatFriends.map(f=>{
-    const avatarHtml=f.avatar?`<img src="${f.avatar}?t=${Date.now()}" onerror="this.outerHTML='<span class=\\'material-symbols-outlined\\'>person</span>'">`:`<span class="material-symbols-outlined">person</span>`;
-    return `<div class="chat-friend-item" onclick="openChatWithFriend('${f.username}','${f.conversation_id||''}')">
+    const avatarHtml=f.avatar?`<img src="${escapeHtml(f.avatar)}?t=${Date.now()}" onerror="this.outerHTML='<span class=\\'material-symbols-outlined\\'>person</span>'">`:`<span class="material-symbols-outlined">person</span>`;
+    return `<div class="chat-friend-item" onclick="openChatWithFriend('${escAttr(f.username)}','${escAttr(f.conversation_id||'')}')">
       <div class="chat-conv-avatar">${avatarHtml}</div>
       <div class="chat-conv-info"><div class="chat-conv-name">${escapeHtml(f.nickname||f.username)}</div></div>
-      <button class="md-btn md-btn-text" onclick="event.stopPropagation();removeChatFriend('${f.username}')" style="padding:4px 8px"><span class="material-symbols-outlined" style="font-size:18px">person_remove</span></button>
+      <button class="md-btn md-btn-text" onclick="event.stopPropagation();removeChatFriend('${escAttr(f.username)}')" style="padding:4px 8px"><span class="material-symbols-outlined" style="font-size:18px">person_remove</span></button>
     </div>`;
   }).join('');
 }
@@ -4566,7 +4647,7 @@ function renderChatGroups(){
   if(!chatGroups.length){list.innerHTML='';empty.style.display='block';return;}
   empty.style.display='none';
   list.innerHTML=chatGroups.map(g=>{
-    return `<div class="chat-conv-item" onclick="openChatConversation('${g.conversation_id}')">
+    return `<div class="chat-conv-item" onclick="openChatConversation('${escAttr(g.conversation_id)}')">
       <div class="chat-conv-avatar"><span class="material-symbols-outlined">groups</span></div>
       <div class="chat-conv-info"><div class="chat-conv-name">${escapeHtml(g.name||'群组')}</div><div class="chat-conv-last">${g.member_count||0} 成员</div></div>
     </div>`;
@@ -4581,11 +4662,11 @@ async function searchChatUsers(){
   if(!r||!r.users.length){results.style.display='none';return;}
   results.style.display='block';
   results.innerHTML=r.users.map(u=>{
-    const avatarHtml=u.avatar?`<img src="${u.avatar}?t=${Date.now()}" onerror="this.outerHTML='<span class=\\'material-symbols-outlined\\'>person</span>'">`:`<span class="material-symbols-outlined">person</span>`;
-    const emailHidden=u.email?u.email.replace(/(.{2})(.*)(@.*)/,'$1***$3'):'';
+    const avatarHtml=u.avatar?`<img src="${escapeHtml(u.avatar)}?t=${Date.now()}" onerror="this.outerHTML='<span class=\\'material-symbols-outlined\\'>person</span>'">`:`<span class="material-symbols-outlined">person</span>`;
+    const emailHidden=u.email?escapeHtml(u.email.replace(/(.{2})(.*)(@.*)/,'$1***$3')):'';
     const isFriend=chatFriends.some(f=>f.username===u.username);
     const addBtn=isFriend?'<span class="md-body-medium" style="color:var(--md-sys-color-primary);font-size:.75rem">已好友</span>'
-      :`<button class="md-btn md-btn-tonal" style="padding:4px 10px;font-size:.75rem" onclick="addChatFriend('${u.username}')"><span class="material-symbols-outlined" style="font-size:14px">person_add</span>添加</button>`;
+      :`<button class="md-btn md-btn-tonal" style="padding:4px 10px;font-size:.75rem" onclick="addChatFriend('${escAttr(u.username)}')"><span class="material-symbols-outlined" style="font-size:14px">person_add</span>添加</button>`;
     return `<div class="chat-search-result">
       <div class="chat-conv-avatar">${avatarHtml}</div>
       <div class="chat-search-result-info"><div class="chat-search-result-name">${escapeHtml(u.nickname||u.username)}</div><div class="chat-search-result-email">${emailHidden}</div></div>
@@ -4610,13 +4691,13 @@ async function loadChatNotifications(){
   let html='';
   friendReqs.forEach(r=>{
     html+=`<div class="chat-notif-item"><span>${escapeHtml(r.from_nickname||r.from_user)} 请求添加好友</span>
-      <button class="md-btn md-btn-filled" style="padding:4px 8px;font-size:.7rem" onclick="acceptFriendReq('${r.request_id}')">接受</button>
-      <button class="md-btn md-btn-outlined" style="padding:4px 8px;font-size:.7rem" onclick="rejectFriendReq('${r.request_id}')">拒绝</button></div>`;
+      <button class="md-btn md-btn-filled" style="padding:4px 8px;font-size:.7rem" onclick="acceptFriendReq('${escAttr(r.request_id)}')">接受</button>
+      <button class="md-btn md-btn-outlined" style="padding:4px 8px;font-size:.7rem" onclick="rejectFriendReq('${escAttr(r.request_id)}')">拒绝</button></div>`;
   });
   groupInvs.forEach(inv=>{
     html+=`<div class="chat-notif-item"><span>${escapeHtml(inv.from_nickname||inv.from_user)} 邀请你加入 ${escapeHtml(inv.group_name||'群组')}</span>
-      <button class="md-btn md-btn-filled" style="padding:4px 8px;font-size:.7rem" onclick="acceptGroupInv('${inv.invite_id}')">接受</button>
-      <button class="md-btn md-btn-outlined" style="padding:4px 8px;font-size:.7rem" onclick="rejectGroupInv('${inv.invite_id}')">拒绝</button></div>`;
+      <button class="md-btn md-btn-filled" style="padding:4px 8px;font-size:.7rem" onclick="acceptGroupInv('${escAttr(inv.invite_id)}')">接受</button>
+      <button class="md-btn md-btn-outlined" style="padding:4px 8px;font-size:.7rem" onclick="rejectGroupInv('${escAttr(inv.invite_id)}')">拒绝</button></div>`;
   });
   document.getElementById('chat-friend-requests').innerHTML=html;
 }
@@ -4691,7 +4772,7 @@ async function showConvInfoDialog(){
         <div id="invite-search-results"></div>
       </div>
       <div class="md-dialog-actions" style="flex-direction:column;gap:8px">
-        <button class="md-btn md-btn-error" style="width:100%" onclick="leaveChatGroup('${chatCurrentConv}')"><span class="material-symbols-outlined" style="font-size:18px">logout</span>退出群组</button>
+        <button class="md-btn md-btn-error" style="width:100%" onclick="leaveChatGroup('${escAttr(chatCurrentConv)}')"><span class="material-symbols-outlined" style="font-size:18px">logout</span>退出群组</button>
         <button class="md-btn md-btn-text" style="width:100%" onclick="document.getElementById('conv-info-dialog').remove()">关闭</button>
       </div>`;
   }else{
@@ -4712,7 +4793,7 @@ async function showConvInfoDialog(){
         return `<div class="chat-friend-item" style="padding:6px 8px">
           <div class="chat-conv-avatar" style="width:28px;height:28px"><span class="material-symbols-outlined" style="font-size:14px">person</span></div>
           <span style="font-size:.85rem">${roleIcon} ${escapeHtml(m.nickname||m.username)}</span>
-          ${m.role!=='owner'&&conv.creator===currentUser.username?`<button class="md-btn md-btn-text" style="padding:2px 6px;font-size:.7rem;margin-left:auto" onclick="removeGroupMember('${chatCurrentConv}','${m.username}')">移除</button>`:''}
+          ${m.role!=='owner'&&conv.creator===currentUser.username?`<button class="md-btn md-btn-text" style="padding:2px 6px;font-size:.7rem;margin-left:auto" onclick="removeGroupMember('${escAttr(chatCurrentConv)}','${escAttr(m.username)}')">移除</button>`:''}
         </div>`;
       }).join('');
     }
@@ -4727,7 +4808,7 @@ async function searchInviteUser(){
   if(!r||!r.users.length){results.innerHTML='<p class="md-body-medium on-surface-variant" style="padding:8px;font-size:.8rem">未找到用户</p>';return;}
   results.innerHTML=r.users.map(u=>`<div class="chat-search-result" style="padding:6px 8px">
     <span style="font-size:.85rem">${escapeHtml(u.nickname||u.username)}</span>
-    <button class="md-btn md-btn-tonal" style="padding:4px 8px;font-size:.7rem;margin-left:auto" onclick="inviteUserToGroup('${chatCurrentConv}','${u.username}')">邀请</button>
+    <button class="md-btn md-btn-tonal" style="padding:4px 8px;font-size:.7rem;margin-left:auto" onclick="inviteUserToGroup('${escAttr(chatCurrentConv)}','${escAttr(u.username)}')">邀请</button>
   </div>`).join('');
 }
 

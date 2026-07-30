@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import hashlib
 import secrets
 import threading
@@ -10,6 +11,10 @@ from typing import Dict, Optional
 from dataclasses import dataclass, asdict
 
 from astrbot.api import logger
+
+# 用户名安全字符集：字母/数字/下划线/连字符/中文，2-20 字符。
+# 防止含路径分隔符/引号/尖括号的用户名被用作文件名或前端注入。
+_USERNAME_RE = re.compile(r"^[A-Za-z0-9_\u4e00-\u9fa5-]{2,20}$")
 
 
 @dataclass
@@ -120,6 +125,9 @@ class UserStore:
         return hashlib.sha256((salt + password).encode("utf-8")).hexdigest()
 
     def register(self, username: str, email: str, password: str) -> tuple:
+        # 安全：纵深防御——即便绕过 WebUI 注册接口，也在存储层强制用户名字符集
+        if not _USERNAME_RE.match(username or ""):
+            return False, "用户名仅允许字母、数字、下划线、连字符和中文（2-20字符）"
         with self._lock:
             if username in self._users:
                 return False, "用户名已存在"
