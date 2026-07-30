@@ -1206,9 +1206,29 @@ class DGLabWebUI:
 
     async def _handle_chat_file_serve(self, request: web.Request) -> web.Response:
         filename = request.match_info["filename"]
-        chat_files_dir = os.path.join(self._user_store._data_dir, "chat_files")
-        file_path = os.path.join(chat_files_dir, filename)
-        if not os.path.exists(file_path):
+        chat_files_dir = os.path.realpath(
+            os.path.join(self._user_store._data_dir, "chat_files")
+        )
+        # 安全校验：拒绝任何包含路径分隔符 / 父目录引用 / 驱动符 / 绝对路径的文件名，
+        # 并用 realpath 归一化后校验最终路径仍位于 chat_files_dir 之内，
+        # 防止路径穿越读取任意文件。
+        if (
+            not filename
+            or filename in (".", "..")
+            or "/" in filename
+            or "\\" in filename
+            or os.path.isabs(filename)
+            or ":" in filename
+            or ".." in os.path.normpath(filename).split(os.sep)
+        ):
+            return web.json_response({"error": "非法文件名"}, status=400)
+        file_path = os.path.realpath(os.path.join(chat_files_dir, filename))
+        try:
+            if os.path.commonpath([chat_files_dir, file_path]) != chat_files_dir:
+                return web.json_response({"error": "非法文件名"}, status=400)
+        except ValueError:
+            return web.json_response({"error": "非法文件名"}, status=400)
+        if not os.path.isfile(file_path):
             return web.json_response({"error": "文件不存在"}, status=404)
         # Determine content type
         ext = os.path.splitext(filename)[1].lower()
