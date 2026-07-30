@@ -83,5 +83,15 @@
     "description": "每次回复时注入到 LLM 的最近共享记忆条数",
     "type": "int",
     "default": 30
+  },
+  "group_switch_enable": {
+    "description": "启用「按群聊独立开关插件」功能。开启后，可用 /开关 命令在单个群聊中关闭/开启本插件全部命令",
+    "type": "bool",
+    "default": true
+  },
+  "group_switch_admin_only": {
+    "description": "是否仅允许群管理员操作 /开关 命令（建议保持开启，避免任意成员随意开关）",
+    "type": "bool",
+    "default": true
   }
 }

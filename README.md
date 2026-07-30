@@ -23,6 +23,7 @@ Pixiv 随机图片 · 每日一言 · 天气查询 · 男娘图片 · 网易云�
   - [6. 天气查询](#6-天气查询--weather-别名天气)
   - [7. 男娘图片](#7-男娘图片--femboy-别名男娘)
   - [8. DG-LAB 设备管理](#8-dg-lab-设备管理--dglab-别名电击)
+- [🧩 按群聊开关](#-按群聊独立开关)
 - [🧠 跨群聊记忆](#-跨群聊记忆)
 - [⚡ 接口连通性测试](#-接口连通性测试--apitest)
 - [⚙️ 配置项](#️-配置项)
@@ -45,6 +46,7 @@ Pixiv 随机图片 · 每日一言 · 天气查询 · 男娘图片 · 网易云�
 | 🌤️ **天气查询** | 实时天气 + 未来 3 天预报 |
 | 👗 **男娘图片** | 随机男娘主题图片（WebP） |
 | 🔌 **DG-LAB** | Socket V2 设备全生命周期管理、多用户/多设备隔离、WebUI 控制面板 |
+| 🧩 **按群聊开关** | 在单个群用 `/开关` 命令一键关闭/开启本插件全部命令，互不影响 |
 | 🧠 **跨群聊记忆** | 同平台所有群共享一份持久化上下文，自动注入 LLM 请求 |
 
 - **⚡ 异步高性能**：基于 `asyncio` + `aiohttp` / `websockets`，非阻塞 I/O。
@@ -115,6 +117,7 @@ pip install websockets>=10.0   # 仅 DG-LAB 功能需要
 | `/weather` | `/天气` | 天气查询 |
 | `/femboy` | `/男娘` | 男娘图片 |
 | `/dglab` | `/电击` | DG-LAB 设备管理 |
+| `/开关` | `/toggle` `/switch` | 按群聊开关本插件全部命令 |
 | `/apitest` | `/连通测试` `/接口测试` | 接口连通性测试 |
 
 ---
@@ -436,6 +439,46 @@ pip install websockets>=10.0   # 仅 DG-LAB 功能需要
 
 ---
 
+## 🧩 按群聊独立开关
+
+每个群聊可独立控制本插件是否生效，互不影响。例如某个群不需要图片/点歌等功能时，可单独关闭它，而其它群不受影响。
+
+#### 基本指令
+
+| 指令 | 说明 |
+| --- | --- |
+| `/开关 off`（或 `/开关 关`） | **关闭**本群全部插件命令（pixiv/解析/jm/music/… 均不再响应） |
+| `/开关 on`（或 `/开关 开`） | **重新启用**本群插件命令 |
+| `/开关 status`（或 `/开关 状态`） | 查看本群当前状态 |
+| `/开关` | 无参数 = 查看状态 + 用法提示 |
+
+> 别名：`/toggle`、`/switch`（如 `/toggle off`）。
+
+#### 使用示例
+
+```text
+/开关 off       # 在本群关闭 CurrentCortex 全部命令
+/pixiv          # 此时不再响应（已关闭）
+/开关 status    # 查看状态：⛔ 已关闭
+/开关 on        # 重新启用
+/pixiv          # 恢复正常
+```
+
+#### 工作原理与说明
+
+- **状态持久化**：开关状态保存在 `data/currentcortex_group_switch.json`，重启后保留。默认（未配置过）为**启用**，只有主动 `/开关 off` 的群才会被关闭。
+- **永不死锁**：`/开关` 命令本身**始终可用**——即使本群已关闭，仍可发送 `/开关 on` 重新启用，不会被拦截。
+- **权限**：默认仅**群管理员**（框架识别的 admin）可操作，避免任意成员随意开关。若你未被识别为管理员，可在配置中关闭 `group_switch_admin_only`。
+- **仅作用于本插件**：该开关只拦截 CurrentCortex 的命令，不影响 AstrBot 其它插件与机器人本体功能。
+- **私聊不受控**：开关仅对群聊生效。
+
+| 配置项 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `group_switch_enable` | bool | true | 是否启用按群聊开关功能（关闭则守卫完全不介入） |
+| `group_switch_admin_only` | bool | true | 是否仅群管理员可操作 `/开关` |
+
+---
+
 ## 🧠 跨群聊记忆
 
 可选功能：在同一平台实例下的所有群聊之间共享一份**持久化**记忆，作为额外上下文注入 LLM 请求，让机器人在不同群之间拥有连续语境。
@@ -662,6 +705,7 @@ cp -a qtine/ /path/to/Qtine/plugins/currentcortex/
 astrbot_plugin_currentcortex/
 ├── main.py                      # 主程序：所有命令注册与 API 客户端
 ├── cross_group_memory.py        # 跨群聊记忆持久化存储
+├── group_switch_store.py        # 按群聊开关状态持久化存储
 ├── media_parser.py              # 小红书/B站/抖音 媒体解析
 ├── media_cmds.py                # 媒体命令辅助
 ├── dglab_client.py              # DG-LAB WebSocket 客户端封装
@@ -702,6 +746,7 @@ astrbot_plugin_currentcortex/
 **主插件与记忆：**
 - **CurrentCortexPlugin(Star)** ([main.py](main.py))：主插件类，集成所有功能并注册命令
 - **CrossGroupMemoryStore** ([cross_group_memory.py](cross_group_memory.py))：跨群聊共享记忆，JSON 持久化
+- **GroupSwitchStore** ([group_switch_store.py](group_switch_store.py))：按群聊开关状态，JSON 持久化
 
 ### 设计特点
 
@@ -727,5 +772,5 @@ astrbot_plugin_currentcortex/
 
 ---
 
-**版本**：v1.5.0  
+**版本**：v1.5.1  
 **仓库**：[GitHub](https://github.com/backrooms-yrc/astrbot_plugin_currentcortex)

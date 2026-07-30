@@ -28,9 +28,11 @@ from .media_parser import (
     URLExtractor,
 )
 from .cross_group_memory import CrossGroupMemoryStore
+from .group_switch_store import GroupSwitchStore
 from astrbot.api.provider import ProviderRequest
 from astrbot.core.agent.message import TextPart
 from astrbot.api.platform import MessageType
+from astrbot.api.event.filter import EventMessageType
 
 
 API_BASE_URL = "https://api.bileizhen.top/api/pixiv"
@@ -1129,7 +1131,7 @@ _JM_CHAPTER_CURSOR_TTL = 30 * 60
     "astrbot_plugin_currentcortex",
     "Rcst20",
     "CurrentCortex 综合插件 - Pixiv 图片、每日一言、天气查询、网易云音乐、JMComic 漫画、DG-LAB 设备管理及小红书/B站/抖音媒体解析等",
-    "1.5.0",
+    "1.5.1",
 )
 class CurrentCortexPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -1316,6 +1318,164 @@ class CurrentCortexPlugin(Star):
                 logger.warning(f"[CrossGroupMemory] 初始化失败，已禁用: {e}")
                 self._cross_group_store = None
                 self._cross_group_enable = False
+
+        # 按群聊独立开关插件：可在单个群用 /开关 命令关闭/开启本插件全部命令。
+        # 存储为「黑名单」语义——默认所有会话启用，只有显式关闭的群会被守卫拦截。
+        self._group_switch_enable = bool(config.get("group_switch_enable", True))
+        self._group_switch_admin_only = bool(
+            config.get("group_switch_admin_only", True)
+        )
+        self._group_switch_store: "GroupSwitchStore | None" = None
+        if self._group_switch_enable:
+            try:
+                self._group_switch_store = GroupSwitchStore(data_dir="data")
+                logger.info(
+                    "[GroupSwitch] 已启用按群聊开关功能"
+                    f"（admin_only={self._group_switch_admin_only}）"
+                )
+            except Exception as e:
+                logger.warning(f"[GroupSwitch] 初始化失败，已禁用: {e}")
+                self._group_switch_store = None
+                self._group_switch_enable = False
+
+    @filter.event_message_type(EventMessageType.ALL, priority=10)
+    async def on_message_group_switch_guard(self, event: AstrMessageEvent):
+        """高优先级守卫：被关闭的群聊中，静默拦截本插件除开关命令外的所有命令。
+
+        priority=10 高于普通命令处理器（默认 0），先于它们执行；此处若
+        event.stop_event()，后续本插件命令都不会再触发。开关命令自身放行，
+        因此随时可用 /开关 on 重新启用，不会出现「关闭后无法再开」的死锁。
+        """
+        if not self._group_switch_enable or self._group_switch_store is None:
+            return
+        try:
+            # 仅群聊受控；私聊一律放行
+            if event.get_message_type() != MessageType.GROUP_MESSAGE:
+                return
+            umo = event.unified_msg_origin
+            if not umo or self._group_switch_store.is_enabled(umo):
+                return
+            # 该群已被关闭：若是开关命令则放行（保证可重新启用），否则静默拦截
+            if self._is_switch_command(event.message_str):
+                return
+            event.stop_event()
+        except Exception as e:
+            logger.error(f"[GroupSwitch] 守卫处理异常（默认放行）: {e}")
+
+    def _is_switch_command(self, message: str) -> bool:
+        """判断消息是否为本插件的开关命令（含中英文与别名、带/不带前缀）。"""
+        if not message:
+            return False
+        normalized = re.sub(r"^[/!！]\s*", "", message.strip()).strip().lower()
+        return any(
+            normalized == kw or normalized.startswith(kw + " ")
+            for kw in ("开关", "toggle", "switch")
+        )
+
+    @filter.command("开关", alias={"toggle", "switch"}, priority=10)
+    async def group_switch_command(self, event: AstrMessageEvent):
+        """按群聊独立开启/关闭本插件全部命令。
+
+        无参数=查看当前状态；on/开=启用；off/关=关闭；status/状态=查看状态。
+        仅在群聊中有效；默认仅群管理员可操作。
+        """
+        if not self._group_switch_enable or self._group_switch_store is None:
+            yield event.plain_result(
+                "❌ 按群聊开关功能未启用\n"
+                "💡 请在插件配置中开启 group_switch_enable 后重启插件"
+            )
+            return
+
+        if event.get_message_type() != MessageType.GROUP_MESSAGE:
+            yield event.plain_result("💡 该命令仅在群聊中可用")
+            return
+
+        umo = event.unified_msg_origin
+        user_name = event.get_sender_name()
+
+        # 权限校验：默认仅管理员可操作
+        if self._group_switch_admin_only and not event.is_admin():
+            logger.info(
+                f"[GroupSwitch] 非管理员 {user_name} 尝试操作开关（已拒绝）"
+            )
+            yield event.plain_result(
+                "❌ 仅群管理员可操作此开关\n"
+                "💡 若你是群主/管理员但仍提示无权限，"
+                "可在插件配置中关闭 group_switch_admin_only"
+            )
+            return
+
+        message_str = event.message_str.strip()
+        action = self._parse_switch_action(message_str)
+
+        currently_enabled = self._group_switch_store.is_enabled(umo)
+
+        if action == "status":
+            state = "✅ 已启用" if currently_enabled else "⛔ 已关闭"
+            yield event.plain_result(
+                f"🔌 本群插件状态\n{state}\n\n"
+                "💡 用法：\n"
+                "  /开关 off  关闭本群全部插件命令\n"
+                "  /开关 on   重新启用"
+            )
+            return
+
+        if action == "off":
+            if not currently_enabled:
+                yield event.plain_result("ℹ️ 本群插件已经是关闭状态")
+                return
+            self._group_switch_store.set_disabled(umo)
+            logger.info(f"[GroupSwitch] 用户 {user_name} 关闭了会话 {umo} 的插件")
+            yield event.plain_result(
+                "⛔ 已在本群关闭 CurrentCortex 插件全部命令\n\n"
+                "💡 重新启用：发送 /开关 on\n"
+                "（开关命令始终可用，不会被拦截）"
+            )
+            return
+
+        if action == "on":
+            if currently_enabled:
+                yield event.plain_result("ℹ️ 本群插件已经是启用状态")
+                return
+            self._group_switch_store.set_enabled(umo)
+            logger.info(f"[GroupSwitch] 用户 {user_name} 启用了会话 {umo} 的插件")
+            yield event.plain_result(
+                "✅ 已在本群重新启用 CurrentCortex 插件全部命令"
+            )
+            return
+
+        # 未知动作：给出帮助
+        state = "✅ 已启用" if currently_enabled else "⛔ 已关闭"
+        yield event.plain_result(
+            f"🔌 本群插件状态：{state}\n\n"
+            "💡 用法：\n"
+            "  /开关 off（或 关）  关闭本群全部插件命令\n"
+            "  /开关 on（或 开）   重新启用\n"
+            "  /开关 status（或 状态）  查看当前状态"
+        )
+
+    def _parse_switch_action(self, message: str) -> str:
+        """从开关命令消息中解析动作：on / off / status / （空）。"""
+        cleaned = re.sub(
+            r"^[/!！]\s*(开关|toggle|switch)\s*",
+            "",
+            message.strip(),
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
+            r"^(开关|toggle|switch)\s*",
+            "",
+            cleaned.strip(),
+            flags=re.IGNORECASE,
+        )
+        token = cleaned.strip().lower()
+        if token in ("on", "开", "enable", "启用"):
+            return "on"
+        if token in ("off", "关", "disable", "关闭", "禁用"):
+            return "off"
+        if token in ("status", "状态", "查看", "query"):
+            return "status"
+        return ""
 
     def _format_cross_group_record(self, event: AstrMessageEvent) -> str:
         """Format a group message into a single record line for cross-group memory.
