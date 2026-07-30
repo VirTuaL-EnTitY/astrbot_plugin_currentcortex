@@ -1,6 +1,15 @@
 name: astrbot_plugin_currentcortex
 display_name: CurrentCortex 综合插件
 desc: 多功能 AstrBot 插件 - 支持 Pixiv 随机图片、每日一言、天气查询、男娘图片、网易云音乐点歌、JMComic 漫画获取、DG-LAB 设备管理及小红书/B站/抖音媒体内容解析等功能
+short_desc: Pixiv 图片 / 点歌 / 漫画 / 媒体解析 / DG-LAB 设备控制等多功能综合插件
 author: Rcst20
 version: v1.5.1
 repo: https://github.com/backrooms-yrc/astrbot_plugin_currentcortex
+support_platforms:
+  - aiocqhttp
+  - qq_official
+  - telegram
+  - discord
+  - kook
+  - slack
+astrbot_version: ">=4.15,<5"

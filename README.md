@@ -88,7 +88,7 @@ pip install websockets>=10.0   # 仅 DG-LAB 功能需要
 
 ### 系统要求
 
-- **AstrBot** >= 3.4.0
+- **AstrBot** >= 4.15（< 5；使用 `EventMessageType` / 处理器 `priority` / `ProviderRequest` 等较新 API）
 - **Python** >= 3.10
 - **aiohttp** >= 3.8.0
 - **websockets** >= 10.0（DG-LAB 功能必需）
@@ -616,7 +616,7 @@ cp -a qtine/ /path/to/Qtine/plugins/currentcortex/
 
 1. Python 版本是否 >= 3.10
 2. 是否已安装依赖：`pip install aiohttp>=3.8.0`（DG-LAB 还需 `websockets>=10.0`）
-3. AstrBot 版本是否 >= 3.4.0
+3. AstrBot 版本是否 >= 4.15（本插件需要较新 API，旧版会无法加载）
 4. 查看 AstrBot 日志中的错误信息
 
 </details>
