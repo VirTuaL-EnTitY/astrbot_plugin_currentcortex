@@ -1,122 +1,147 @@
 # AstrBot CurrentCortex 综合插件
 
-基于 [LeiZ API](https://api.bileizhen.top) 开发的多功能 AstrBot 插件，提供 **Pixiv 随机图片获取**、**每日一言**、**天气查询**、**男娘图片获取**、**网易云音乐点歌**、**JMComic 漫画获取** 及 **DG-LAB 设备管理** 等功能。
+<div align="center">
 
-## 📋 项目概述
+**一个多功能 AstrBot 插件** — 集内容获取、媒体解析、设备控制与跨群记忆于一体。
 
-本插件是一个集成了多种实用功能的 AstrBot 插件，专为提升聊天机器人交互体验而设计。通过简洁的命令接口，用户可以轻松获取各类内容和服务，并支持对 DG-LAB 设备进行完整的生命周期管理。
+Pixiv 随机图片 · 每日一言 · 天气查询 · 男娘图片 · 网易云点歌 · JMComic 漫画 · 小红书/B站/抖音解析 · DG-LAB 设备管理 · 跨群聊记忆
 
-> 同时提供 **Qtine / OneBot v11** 兼容包，见下方「Qtine 安装」。AstrBot 主入口及原有富媒体行为保持不变。
+</div>
 
-### ✨ 核心特性
+---
 
-- **🎨 Pixiv 随机图片**：获取随机 Pixiv 图片，支持 R18 内容、标签筛选、关键词搜索、指定作者等
-- **✨ 每日一言**：获取随机一言（支持动画、漫画、游戏、文学等 12 种分类）
-- **🌤️ 天气查询**：实时查询城市天气信息及未来 3 天天气预报
-- **👗 男娘图片**：随机获取男娘主题图片（需配置 API 密钥）
-- **📚 JMComic 漫画**：搜索漫画、查看详情、获取章节图片、随机推荐
-- **🎵 网易云音乐**：点歌、搜索歌曲、获取播放链接和歌曲详情
-- **🔌 DG-LAB 设备管理**：完整的 DG-LAB Socket V2 设备控制，包括绑定/解绑、强度调节、电击启停、波形发送、实时反馈等
-- **⚡ 异步高性能**：基于 aiohttp 的异步请求，响应迅速
-- **🛡️ 完善错误处理**：网络异常、API 错误、参数错误等均有友好提示
-- **⚙️ 灵活配置**：支持在 AstrBot 管理面板中自定义默认参数
-- **👥 多用户隔离**：DG-LAB 模块支持多用户并发使用，操作完全隔离
+## 📋 目录
 
-### 📝 指令别名速查
+- [✨ 核心特性](#-核心特性)
+- [🚀 快速开始](#-快速开始)
+- [🎯 功能详解](#-功能详解)
+  - [1. Pixiv 随机图片](#1-pixiv-随机图片--pixiv-别名图片)
+  - [2. 媒体内容解析](#2-媒体内容解析--解析-别名小红书b站抖音)
+  - [3. JMComic 漫画](#3-jmcomic-漫画--jm-别名漫画--jmcommend-别名漫画推荐)
+  - [4. 网易云音乐](#4-网易云音乐--music-别名音乐)
+  - [5. 每日一言](#5-每日一言--hitokoto-别名一言)
+  - [6. 天气查询](#6-天气查询--weather-别名天气)
+  - [7. 男娘图片](#7-男娘图片--femboy-别名男娘)
+  - [8. DG-LAB 设备管理](#8-dg-lab-设备管理--dglab-别名电击)
+- [🧠 跨群聊记忆](#-跨群聊记忆)
+- [⚡ 接口连通性测试](#-接口连通性测试--apitest)
+- [⚙️ 配置项](#️-配置项)
+- [🔌 Qtine 兼容包](#-qtine-兼容包)
+- [❓ 常见问题](#-常见问题)
+- [🛠️ 技术架构](#️-技术架构)
+- [📄 开源协议与致谢](#-开源协议与致谢)
 
-所有指令均支持中文别名，用户输入中文命令也能触发对应功能：
+---
 
-| 英文指令 | 中文别名 | 功能 |
-| --- | --- | --- |
-| `/pixiv` | `/图片` | Pixiv 随机图片 |
-| `/hitokoto` | `/一言` | 每日一言 |
-| `/weather` | `/天气` | 天气查询 |
-| `/femboy` | `/男娘` | 男娘图片 |
-| `/jm` | `/漫画` | JMComic 漫画 |
-| `/jmcommend` | `/漫画推荐` | 漫画随机推荐 |
-| `/music` | `/音乐` | 网易云音乐 |
-| `/点歌` | — | 快捷点歌（仅返回语音条） |
-| `/dglab` | `/电击` | DG-LAB 设备管理 |
+## ✨ 核心特性
 
-**子命令中文别名：**
+| 模块 | 能力 |
+| --- | --- |
+| 🎨 **Pixiv 随机图片** | 随机图 / R18 / 标签筛选 / 关键词搜索 / 指定作者 / 长宽比筛选 / 排除 AI |
+| 🔍 **媒体解析** | 小红书图文视频 · B站视频信息 · 抖音无水印视频 |
+| 📚 **JMComic 漫画** | 搜索 / 详情 / 章节图片（合并转发分段下发）/ 随机推荐 |
+| 🎵 **网易云点歌** | 点歌、搜索、语音条、原始文件、按 ID 获取 |
+| ✨ **每日一言** | 12 种分类（动画/漫画/游戏/文学/诗词/影视…） |
+| 🌤️ **天气查询** | 实时天气 + 未来 3 天预报 |
+| 👗 **男娘图片** | 随机男娘主题图片（WebP） |
+| 🔌 **DG-LAB** | Socket V2 设备全生命周期管理、多用户/多设备隔离、WebUI 控制面板 |
+| 🧠 **跨群聊记忆** | 同平台所有群共享一份持久化上下文，自动注入 LLM 请求 |
 
-| 命令 | 英文子命令 | 中文子命令 |
-| --- | --- | --- |
-| `/jm` (漫画) | `search` / `detail` / `chapter` / `con` | `搜索` / `详情` / `章节` / `续` / `继续` |
-| `/music` (音乐) | `search` / `id:` | `搜索` / `编号:` |
-| `/dglab` (电击) | `bind` / `unbind` / `strength` / `up` / `down` / `shock` / `stop` / `clear` / `pulse` / `feedback` / `status` / `info` / `permission` | `绑定` / `解绑` / `强度` / `增加` / `减少` / `电击` / `停止` / `清空` / `波形` / `反馈` / `状态` / `信息` / `权限` |
+- **⚡ 异步高性能**：基于 `asyncio` + `aiohttp` / `websockets`，非阻塞 I/O。
+- **🛡️ 健壮容错**：网络异常、API 错误、参数错误均有友好提示；点歌带指数退避重试。
+- **⚙️ 灵活配置**：所有默认参数均可在 AstrBot 管理面板自定义。
+- **👥 多租户隔离**：DG-LAB 每个用户/每台设备连接与操作完全隔离。
 
-## 📦 安装方法
+---
 
-### 方法一：通过 AstrBot 插件市场安装（推荐）
+## 🚀 快速开始
 
-在 AstrBot 管理面板的插件市场中搜索 `astrbot_plugin_currentcortex` 并安装。
+### 1. 安装
 
-### 方法二：手动安装
+**方式一：插件市场（推荐）** — 在 AstrBot 管理面板搜索 `astrbot_plugin_currentcortex` 安装。
+
+**方式二：手动克隆：**
 
 ```bash
 cd AstrBot/data/plugins
 git clone https://github.com/backrooms-yrc/astrbot_plugin_currentcortex.git
 ```
 
-#### 安装依赖
+### 2. 配置 API Key（必填）
+
+> 🔐 **LeiZ API 鉴权要求**：自最新版本起，**所有接口（含免费接口）均需携带 API Key**，请求头格式为 `x-api-key: <API-Key>`。
+
+打开 AstrBot 管理面板 → 插件管理 → 本插件 → 配置，填写 **`leiz_api_key`** 后保存并重启插件。
+
+未配置时，Pixiv / 一言 / 天气 / 男娘 / 点歌 / JMComic 等全部 LeiZ 接口命令将不可用，调用时会给出配置引导提示。
+
+> **旧版迁移**：v1.3.x 及更早版本的 `femboy_api_key` 已合并为统一的 `leiz_api_key`。若未填新字段但保留了旧字段，插件会自动作为统一 Key 使用并提示迁移，建议尽快改填到 `leiz_api_key`。
+
+### 3. 安装依赖
 
 ```bash
-pip install aiohttp>=3.8.0 websockets>=10.0
+pip install aiohttp>=3.8.0
+pip install websockets>=10.0   # 仅 DG-LAB 功能需要
 ```
-
-> ⚠️ **DG-LAB 功能需要 `websockets` 库**，请确保已安装。
-
-### Qtine 安装
-
-Qtine 使用当前加载器要求的标准外部插件结构。将本仓库中的 `qtine/` 目录复制（或软链接）到 Qtine 的外部插件目录，目录内必须保留 `main.py`、`data.json` 与 `requirements.txt`：
-
-```bash
-cp -a qtine/ /path/to/Qtine/plugins/currentcortex/
-# 请按实际安装目录调整；目录名应为 currentcortex，而不是 AstrBot 插件根目录。
-```
-
-Qtine 配置项会在插件配置面板中注册，包含 AstrBot `_conf_schema.json` 的所有默认参数。Qtine 的持久化 JSON 记录和 DG-LAB 二维码保存在 `qtine/data/`，不会依赖 Qtine 进程的工作目录。
-
-Qtine 富媒体通过 **OneBot v11 CQ 码**发送：图片为 `[CQ:image,...]`、语音为 `[CQ:record,...]`、下载文件为 `[CQ:file,...]`。Qtine 不负责媒体上传或能力探测，需使用支持本地 `file://` 和 CQ 码的 QQ OneBot 实现（例如已正确配置的 NapCat）。图片、音乐、媒体解析和 DG-LAB 二维码均会使用该通道；JMComic 的合并转发会降级为一条文本和顺序图片 CQ 码。请在目标 OneBot 实现中验证展示效果。
-
-> 音乐语音仍依赖系统 `ffmpeg`。若适配器不支持 record/file CQ 码，插件会保留文本播放链接或提示，但无法由 Qtine 代替适配器上传媒体。
 
 ### 系统要求
 
-- **AstrBot** >= 3.4.0（AstrBot 运行时）
-- **Qtine**（Qtine 兼容包运行时）
+- **AstrBot** >= 3.4.0
 - **Python** >= 3.10
 - **aiohttp** >= 3.8.0
 - **websockets** >= 10.0（DG-LAB 功能必需）
+- **ffmpeg**（网易云语音条功能需要，需在系统 PATH 中）
 
-## 🎯 功能介绍
+---
 
-### 1️⃣ Pixiv 随机图片 (`/pixiv`，别名：`/图片`)
+## 🎯 功能详解
 
-通过 LeiZ API 获取随机 Pixiv 图片，支持丰富的筛选和搜索功能。
+### 指令速查表
+
+所有指令均支持中英文别名：
+
+| 指令 | 别名 | 功能 |
+| --- | --- | --- |
+| `/pixiv` | `/图片` | Pixiv 随机图片 |
+| `/解析` | — | 自动识别平台解析媒体链接 |
+| `/xhs` | `/小红书` | 小红书解析 |
+| `/bilibili` | `/B站` `/b站` | B站视频解析 |
+| `/douyin` | `/抖音` | 抖音视频解析 |
+| `/jm` | `/漫画` | JMComic 漫画 |
+| `/jmcommend` | `/漫画推荐` | 漫画随机推荐 |
+| `/music` | `/音乐` | 网易云音乐 |
+| `/点歌` | — | 快捷点歌（仅语音条） |
+| `/hitokoto` | `/一言` | 每日一言 |
+| `/weather` | `/天气` | 天气查询 |
+| `/femboy` | `/男娘` | 男娘图片 |
+| `/dglab` | `/电击` | DG-LAB 设备管理 |
+| `/apitest` | `/连通测试` `/接口测试` | 接口连通性测试 |
+
+---
+
+### 1. Pixiv 随机图片 (`/pixiv`，别名 `/图片`)
+
+通过 LeiZ API 获取随机 Pixiv 图片，支持丰富的筛选与搜索。
 
 #### 基本指令
 
 | 指令 | 说明 |
 | --- | --- |
-| `/pixiv`（或 `/图片`） | 获取一张随机全年龄图片 |
-| `/pixiv help` | 显示帮助信息 |
+| `/pixiv` | 获取一张随机图片（按默认参数） |
+| `/pixiv help` | 显示帮助 |
 
-#### 参数说明
-
-使用 `key:value` 格式指定参数，多个参数用空格分隔：
+#### 参数说明（`key:value` 格式，空格分隔，可自由组合）
 
 | 参数 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `r18:` | int | 0 | R18 模式：0=全年龄，1=仅R18，2=混合 |
-| `tag:` | string | - | 标签筛选，多个标签用 `\|` 分隔（OR 匹配），多个 tag 参数为 AND 匹配 |
-| `keyword:` | string | - | 标题/作者/标签模糊搜索 |
+| `r18:` | int | 0 | R18 模式：`0`=全年龄、`1`=仅 R18、`2`=混合 |
 | `num:` | int | 1 | 获取数量（1-20） |
-| `size:` | string | regular | 图片尺寸：original/regular/small/thumb/mini |
-| `excludeAI:` | bool | false | 是否排除 AI 生成作品 |
-| `uid:` | int | - | 指定作者 UID |
-| `ratio:` | string | - | 长宽比筛选，如 `gt1.2lt1.8` |
+| `size:` | string | regular | 图片尺寸：`original`/`regular`/`small`/`thumb`/`mini` |
+| `tag:` | string | — | 标签筛选；单个 tag 内用 `\|` 为 **OR**，多个 tag 参数为 **AND** |
+| `keyword:` | string | — | 标题 / 作者 / 标签模糊搜索 |
+| `uid:` | int | — | 指定作者 UID |
+| `ratio:` | string | — | 长宽比筛选，如 `gt1.2lt1.8` |
+| `excludeAI:` | bool | false | 排除 AI 生成作品 |
 
 #### 快捷语法
 
@@ -128,30 +153,29 @@ Qtine 富媒体通过 **OneBot v11 CQ 码**发送：图片为 `[CQ:image,...]`�
 
 #### 使用示例
 
-```
-# 基础用法
+```text
+# 基础随机
 /pixiv                          # 随机全年龄图片
 /pixiv r18:1                    # 随机 R18 图片
-/pixiv help                     # 显示帮助
+/pixiv num:5                    # 一次获取 5 张
 
-# 高级搜索
-/pixiv r18:1 tag:白丝 num:3     # 获取3张白丝R18图
-/pixiv keyword:初音ミク num:5   # 搜索初音未来相关图片
-/pixiv tag:萝莉 excludeAI:true  # 排除AI的萝莉标签图片
-/pixiv uid:123456 num:3         # 获取指定作者的作品
+# 标签与关键词搜索
+/pixiv tag:白丝 num:3           # 获取 3 张白丝图
+/pixiv keyword:初音ミク num:5   # 搜索初音未来相关
+/pixiv tag:萝莉 excludeAI:true  # 排除 AI 的萝莉标签
+/pixiv uid:123456 num:3         # 指定作者作品
 
 # 组合筛选
 /pixiv r18:2 tag:白丝 keyword:初音ミク num:3 size:original
 
 # 快捷语法
-/pixiv r18                      # 等同于 r18:1
-/pixiv mixed                    # 等同于 r18:2
-/pixiv safe                     # 等同于 r18:0
+/pixiv r18                      # 等同 r18:1
+/pixiv mixed                    # 等同 r18:2
 ```
 
-#### 返回结果示例
+#### 返回示例
 
-```
+```text
 📷 [1/3]
 🎨 冬日午后
 👤 作者：SampleArtist
@@ -161,19 +185,144 @@ Qtine 富媒体通过 **OneBot v11 CQ 码**发送：图片为 `[CQ:image,...]`�
 [图片]
 ```
 
+> 💡 **随机与搜索的路由**：未提供 `tag`/`keyword`/`uid`/`ratio`/`excludeAI` 等过滤参数时，走 GET 随机接口（每次结果不同）；提供任一过滤参数时自动切换到 POST 筛选接口。
+
 ---
 
-### 2️⃣ 每日一言 (`/hitokoto`，别名：`/一言`)
+### 2. 媒体内容解析 (`/解析`，别名 `/小红书` `/B站` `/抖音`)
 
-获取来自社区贡献的随机一言，支持多分类选择。
+自动识别平台并解析小红书、B站、抖音的媒体链接，返回无水印图片 / 视频信息。
 
 #### 基本指令
 
 | 指令 | 说明 |
 | --- | --- |
-| `/hitokoto`（或 `/一言`） | 获取一条随机一言（默认全部分类） |
-| `/hitokoto <分类代码>` | 获取指定分类的一言 |
-| `/hitokoto help` | 显示帮助信息 |
+| `/解析 <链接>` | 自动识别平台并解析 |
+| `/xhs <链接>`（`/小红书`） | 小红书解析 |
+| `/bilibili <链接>`（`/B站` `/b站`） | B站视频解析 |
+| `/douyin <链接>`（`/抖音`） | 抖音视频解析 |
+| `/解析 help` | 显示帮助 |
+
+#### 支持的链接格式
+
+| 平台 | 支持格式 |
+| --- | --- |
+| 小红书 | `xiaohongshu.com/explore/xxx`、`xhslink.com/xxx`（短链） |
+| B站 | `bilibili.com/video/BVxxx`、`b23.tv/xxx`（短链）、`avxxx` |
+| 抖音 | `douyin.com/video/xxx`、`v.douyin.com/xxx`（短链） |
+
+#### 使用示例
+
+```text
+/解析 https://www.xiaohongshu.com/explore/abc123
+/xhs https://xhslink.com/xxxx
+/bilibili https://www.bilibili.com/video/BV1xx411c7mD
+/douyin https://v.douyin.com/xxxx
+```
+
+#### 返回信息
+
+- **小红书**：标题、作者、点赞、简介、无水印高清原图、视频链接（如有）
+- **B站**：标题、UP主、时长、播放/点赞、封面、分P信息、视频下载链接（如有）
+- **抖音**：标题、作者、点赞/评论/分享、无水印视频链接
+
+> ⚠️ 请确保链接可公开访问；部分平台可能因反爬策略导致解析失败。下载链接仅供个人学习使用，请遵守平台规范。
+
+---
+
+### 3. JMComic 漫画 (`/jm`，别名 `/漫画` & `/jmcommend`，别名 `/漫画推荐`)
+
+通过 LeiZ JMComic API 搜索、获取漫画与章节图片。
+
+#### 基本指令
+
+| 指令 | 说明 |
+| --- | --- |
+| `/jm <章节ID>` | 最简写法，获取章节图片（合并转发发送） |
+| `/jm chapter <章节ID>`（`/漫画 章节`） | 等价写法 |
+| `/jm con`（`/漫画 续` `/漫画 继续`） | 继续查看上一章节的后续图片 |
+| `/jm search <关键词>`（`/漫画 搜索`） | 搜索漫画 |
+| `/jm search <关键词> page:<页码>` | 搜索漫画（指定页码） |
+| `/jm detail <漫画ID>`（`/漫画 详情`） | 获取漫画详情 |
+| `/jmcommend`（`/漫画推荐`） | 随机推荐一部漫画 |
+| `/jm help` | 显示帮助 |
+
+#### 使用示例
+
+```text
+# 搜索
+/jm search 原神              # 搜索「原神」相关
+/jm search 萝莉 page:2       # 搜索第 2 页
+
+# 详情
+/jm detail 413828            # 获取漫画详情
+
+# 章节图片
+/jm 413828                   # 最简写法
+/jm chapter 413828           # 等价写法
+/jm con                      # 续看后续图片（整章超过 20 张时）
+
+# 随机推荐
+/jmcommend
+```
+
+#### 章节图片分段与转码
+
+- **分段下发**：整章图片较多时，每条命令最多下发 `jm_page_size`（默认 20）张。仍有剩余会提示，发送 `/jm con` 继续查看，可重复直至看完。单条合并转发节点过多可能被 QQ 拒绝（`retcode=1200`），故默认值偏保守；如遇转发失败可调小该值。
+- **统一转 JPEG**：章节图片统一转码为 JPEG 再嵌入合并转发——QQ 合并转发对 webp 等格式兼容性差，会被服务端拒绝。超过 `jm_image_max_bytes`（默认 2MB）的图片会再逐档降质压缩。
+- **续看游标**：续看状态仅保存在内存中、约 **30 分钟** 有效，过期后需重新 `/jm <章节ID>` 获取。
+
+> ⚠️ 内容来源于第三方 API，请遵守相关法律法规。详情与章节接口响应可能较慢，请耐心等待。
+
+---
+
+### 4. 网易云音乐 (`/music`，别名 `/音乐`)
+
+通过 LeiZ Netease API 实现点歌、搜索与播放链接获取。
+
+#### 基本指令
+
+| 指令 | 说明 |
+| --- | --- |
+| `/music <歌曲名>`（`/音乐`） | 点歌（搜索并返回第一首的详细信息） |
+| `/music direct <歌曲名>`（`/音乐 直接`） | 仅返回转码后的语音条 |
+| `/点歌 <歌曲名>` | 快捷命令，等效 `/音乐 直接`，仅返回语音条 |
+| `/music file <歌曲名>`（`/音乐 文件`） | 返回未经转码的原始音乐文件 |
+| `/music id:<歌曲ID>`（`/音乐 编号:`） | 通过 ID 获取详细信息 |
+| `/music search <关键词>`（`/音乐 搜索`） | 搜索歌曲列表 |
+| `/music help` | 显示帮助 |
+
+#### 使用示例
+
+```text
+/music 孤勇者              # 点歌
+/music 周杰伦 晴天         # 搜索「周杰伦 晴天」
+/music direct 孤勇者       # 仅返回语音条
+/点歌 孤勇者               # 快捷命令
+/music file 孤勇者         # 返回原始音频附件
+/music id:1901371647       # 通过 ID 获取
+/music search 陈奕迅       # 搜索歌曲列表
+```
+
+#### 返回信息
+
+歌曲名称、艺术家、专辑、封面、音质（码率/格式/等级）、文件大小、播放链接。在 QQ 平台会自动将播放链接解析为**语音条**发送（依赖框架 `Record` 消息段；不支持时降级为文本链接）。
+
+> ⚠️ 部分 VIP 歌曲可能无法获取播放链接；播放链接有时效性，请及时使用。语音条功能依赖系统 `ffmpeg`。
+
+---
+
+### 5. 每日一言 (`/hitokoto`，别名 `/一言`)
+
+获取来自社区贡献的随机一言。
+
+#### 基本指令
+
+| 指令 | 说明 |
+| --- | --- |
+| `/hitokoto` | 随机获取一言（全部分类） |
+| `/hitokoto <分类代码>` | 指定分类 |
+| `/hitokoto help` | 显示帮助 |
 
 #### 分类选项
 
@@ -186,680 +335,397 @@ Qtine 富媒体通过 **OneBot v11 CQ 码**发送：图片为 `[CQ:image,...]`�
 | e | 原创 | k | 哲学 |
 | f | 来自网络 | l | 抖机灵 |
 
-#### 使用示例
-
-```
-/hitokoto                  # 随机获取一言
-/hitokoto a               # 获取动画类一言
-/hitokoto d               # 获取文学类一言
-/hitokoto i               # 获取诗词类一言
-/hitokoto help            # 显示帮助
-```
-
-#### 返回结果示例
-
-```
-✨ 每日一言
-
-「生活就像一盒巧克力，你永远不知道下一颗是什么味道」
-
-—— 阿甘正传
-📂 分类：影视
+```text
+/hitokoto a    # 获取动画类一言
+/hitokoto i    # 获取诗词类一言
 ```
 
 ---
 
-### 3️⃣ 天气查询 (`/weather`，别名：`/天气`)
+### 6. 天气查询 (`/weather`，别名 `/天气`)
 
-实时查询指定城市的天气信息及未来 3 天天气预报。
+实时查询城市天气及未来 3 天预报。
+
+```text
+/weather 广州市      # 查询广州天气
+/weather 北京        # 查询北京天气
+/weather help        # 显示帮助
+```
+
+支持中国主要城市，建议使用中文城市名（最长 50 字符）。返回当前温度/天气/体感/风力/湿度及未来 3 天预报。
+
+---
+
+### 7. 男娘图片 (`/femboy`，别名 `/男娘`)
+
+随机获取男娘主题图片（WebP）。
+
+```text
+/femboy          # 随机男娘图片
+/femboy help     # 显示帮助
+```
+
+> 使用前必须配置 `leiz_api_key`，详见 [快速开始](#2-配置-api-key必填)。
+
+---
+
+### 8. DG-LAB 设备管理 (`/dglab`，别名 `/电击`)
+
+通过 DG-LAB Socket V2 协议实现对郊狼脉冲主机的完整控制。**需运行 [DG-LAB Socket V2 中转服务器](https://github.com/DG-LAB-OPENSOURCE/DG-LAB-OPENSOURCE)**。
 
 #### 基本指令
 
 | 指令 | 说明 |
 | --- | --- |
-| `/weather <城市名>`（或 `/天气 <城市名>`） | 查询指定城市的天气 |
-| `/weather help` | 显示帮助信息 |
-
-#### 使用示例
-
-```
-/weather 广州市           # 查询广州市天气
-/weather 北京             # 查询北京市天气
-/weather 上海             # 查询上海市天气
-/weather help             # 显示帮助
-```
-
-#### 返回结果示例
-
-```
-🌤️ 广州市 天气预报
-📍 广东
-
-☀️ 当前天气
-🌡️ 温度：28
-☁️ 天气：多云
-🤒 体感温度：30
-💨 风力：东南风 3级
-💧 湿度：75%
-
-📅 未来天气预报
-
-📆 第1天：2025-01-15（周三）
-   ☁️ 天气：晴
-   🌡️ 温度：18~28
-   💨 风力：东南风 3级
-   💧 湿度：70%
-
-📆 第2天：2025-01-16（周四）
-   ☁️ 天气：多云
-   🌡️ 温度：19~29
-   💨 风力：南风 2级
-   💧 湿度：68%
-```
-
----
-
-### 4️⃣ 男娘图片 (`/femboy`，别名：`/男娘`)
-
-通过 LeiZ Femboy API 随机获取男娘主题图片。
-
-> ⚠️ **使用前必须配置 API 密钥**，详见下方配置说明。
-
-#### 基本指令
-
-| 指令 | 说明 |
-| --- | --- |
-| `/femboy`（或 `/男娘`） | 获取一张随机男娘图片（WebP 格式） |
-| `/femboy help` | 显示帮助信息 |
-
-#### 配置要求
-
-使用此功能前，需要在插件配置面板中填写 `leiz_api_key`（LeiZ API 统一密钥）。未配置时调用命令会提示错误。
-
-#### 使用示例
-
-```
-/femboy                  # 获取随机男娘图片
-/femboy help             # 显示帮助
-```
-
-#### 返回结果示例
-
-```
-👗 随机男娘图片
-📸 来源：网络收集
-📝 备注：示例备注
-[图片]
-```
-
----
-
-### 5️⃣ JMComic 漫画 (`/jm`，别名：`/漫画` & `/jmcommend`，别名：`/漫画推荐`)
-
-通过 LeiZ JMComic API 搜索和获取漫画内容，支持搜索、详情查看、章节图片获取及随机推荐。
-
-#### 基本指令
-
-| 指令 | 说明 |
-| --- | --- |
-| `/jm <章节ID>` | 最简写法，获取章节图片（以合并转发消息发送） |
-| `/jm chapter <章节ID>`（或 `/漫画 章节 <章节ID>`） | 同上，等价写法 |
-| `/jm con`（或 `/漫画 续` / `/漫画 继续`） | 继续查看上一章节的后续图片 |
-| `/jm search <关键词>`（或 `/漫画 搜索 <关键词>`） | 搜索漫画 |
-| `/jm search <关键词> page:<页码>` | 搜索漫画（指定页码） |
-| `/jm detail <漫画ID>`（或 `/漫画 详情 <漫画ID>`） | 获取漫画详情（标题、作者、简介、章节列表） |
-| `/jmcommend`（或 `/漫画推荐`） | 随机推荐一部漫画 |
-| `/jm help` | 显示帮助信息 |
-
-#### 使用示例
-
-```
-# 搜索漫画
-/jm search 原神              # 搜索「原神」相关漫画
-/jm search 萝莉 page:2       # 搜索第2页结果
-
-# 查看详情
-/jm detail 413828            # 获取漫画ID为413828的详情
-
-# 获取章节图片
-/jm 413828                   # 最简写法，获取章节图片（合并转发发送）
-/jm chapter 413828           # 等价写法
-
-# 续看后续图片（整章超过 20 张时）
-/jm con                      # 继续查看剩余图片，可重复发送
-
-# 随机推荐
-/jmcommend                   # 随机推荐一部漫画
-```
-
-#### 搜索结果示例
-
-```
-📚 搜索「原神」结果（第1页）：
-
-  1. 【1438976】被达达利亚用常识改变催眠...
-     作者: 秋月リア | 分类: 同人
-  2. 【1435210】原神同人作品集
-     作者: SampleAuthor | 分类: 同人
-
-💡 使用 /jm detail <漫画ID> 查看详情
-```
-
-#### 随机推荐示例
-
-```
-📚 随机漫画推荐
-
-📕 标题：示例漫画标题
-👤 作者：示例作者
-📂 分类：同人
-🆔 ID：123456
-
-💡 使用 /jm detail 123456 查看详情
-💡 使用 /jm 123456 查看图片
-```
-
-#### QQ 合并转发支持
-
-在 QQ 平台使用 `/jm <章节ID>` 获取章节图片时，插件会以**合并转发消息**（聊天记录）的形式批量发送图片，避免逐条发送大量图片导致风控或刷屏。
-
-#### 章节图片分段与转码
-
-- **分段下发**：整章图片较多时，每条命令最多下发 20 张（可配置 `jm_page_size`）。仍有剩余时插件会提示，发送 `/jm con` 即可继续查看下一段，可重复发送直至看完。单条合并转发节点过多/payload 过大可能被 QQ 拒绝，故默认值偏保守；若仍遇转发失败可调小该值。
-- **统一转 JPEG**：章节图片会统一转码为 JPEG 再嵌入合并转发——QQ 的合并转发对 webp 等格式兼容性差，实测会导致转发被 QQ 服务端拒绝。体积超阈值（默认 2MB，可配置 `jm_image_max_bytes`）的图片会再逐档降质压缩。
-- **续看游标**：续看状态仅保存在内存中、约 30 分钟有效，过期后需重新 `/jm <章节ID>` 获取。
-
-#### 注意事项
-
-- 内容来源于第三方 API，请遵守相关法律法规
-- API 响应可能较慢（尤其是详情和章节接口），请耐心等待
-- 章节图片分段下发、大图按需压缩，合并转发形式发送
-- 无需额外配置，开箱即用
-
----
-
-### 6️⃣ 网易云音乐 (`/music`，别名：`/音乐`)
-
-通过 LeiZ Netease API 实现点歌、搜索歌曲和获取播放链接功能。
-
-#### 基本指令
-
-| 指令 | 说明 |
-| --- | --- |
-| `/music <歌曲名>`（或 `/音乐 <歌曲名>`） | 点歌（搜索并返回第一首歌的详细信息） |
-| `/music direct <歌曲名>`（或 `/音乐 直接 <歌曲名>`） | 仅返回转码后的语音条 |
-| `/点歌 <歌曲名>` | 快捷命令，等效于 `/音乐 直接`，仅返回语音条 |
-| `/music file <歌曲名>`（或 `/音乐 文件 <歌曲名>`） | 返回未经转码的原始音乐文件 |
-| `/music id:<歌曲ID>`（或 `/音乐 编号:<歌曲ID>`） | 通过歌曲 ID 获取详细信息 |
-| `/music search <关键词>`（或 `/音乐 搜索 <关键词>`） | 搜索歌曲列表 |
-| `/music help` | 显示帮助信息 |
-
-#### 使用示例
-
-```
-# 点歌（搜索并获取第一首歌的信息）
-/music 孤勇者              # 搜索并获取「孤勇者」
-/music 周杰伦 晴天         # 搜索「周杰伦 晴天」
-
-# 仅返回语音条
-/music direct 孤勇者       # 返回低码率 MP3 语音条
-/点歌 孤勇者               # 快捷命令，等效于 /music direct
-
-# 返回原始音乐文件（不转码）
-/music file 孤勇者         # 返回原始音频附件
-
-# 通过 ID 获取
-/music id:1901371647       # 获取指定 ID 的歌曲信息
-
-# 搜索歌曲列表
-/music search 陈奕迅       # 搜索陈奕迅相关歌曲列表
-/music help                # 显示帮助
-```
-
-#### 返回信息
-
-- 歌曲名称、艺术家、专辑
-- 专辑封面图片
-- 音质信息（码率、格式、音质等级）
-- 文件大小
-- 播放链接
-
-#### 返回结果示例
-
-```
-🎵 孤勇者
-👤 艺术家：陈奕迅
-💿 专辑：孤勇者
-🎧 音质：无损 / FLAC / 907kbps
-📦 大小：27.7MB
-🔗 播放链接：http://m701.music.126.net/...
-[专辑封面图片]
-```
-
-#### 搜索结果示例
-
-```
-🔍 搜索「陈奕迅」结果：
-
-  1. 孤勇者 - 陈奕迅
-     ID: 1901371647
-  2. 富士山下 - 陈奕迅
-     ID: 5264842
-  3. 十年 - 陈奕迅
-     ID: 185809
-
-💡 使用 /music id:<歌曲ID> 获取详细信息和播放链接
-```
-
-#### QQ 语音条支持
-
-在 QQ 平台使用时，插件会自动将播放链接解析为**语音条**发送，用户可以直接在聊天中播放歌曲，无需手动打开链接。
-
-> 💡 语音条功能依赖 AstrBot 框架的 `Record` 消息段支持。如果当前环境不支持，插件会自动降级为仅发送文本链接，不影响其他功能。
-
-#### 注意事项
-
-- 部分 VIP 歌曲可能无法获取播放链接
-- 播放链接有时效性，请及时使用
-- 原始音乐文件不经过转码，受平台文件大小和格式限制
-- 数据来源于网易云音乐，仅供个人试听
-- 无需额外配置，开箱即用
-- 在 QQ 中会自动发送语音条，其他平台发送播放链接
-
----
-
-### 7️⃣ DG-LAB 设备管理 (`/dglab`，别名：`/电击`)
-
-通过 DG-LAB Socket V2 协议实现对郊狼脉冲主机的完整控制，支持设备绑定、强度调节、输出控制等功能。
-
-> ⚠️ **此功能需要运行 DG-LAB 中转服务器**（详见下方配置说明）。
-
-#### 基本指令
-
-| 指令 | 说明 |
-| --- | --- |
-| `/dglab bind [服务器地址]`（或 `/电击 绑定`） | 绑定新设备（生成二维码供 APP 扫描，支持多设备追加） |
-| `/dglab unbind [序号]`（或 `/电击 解绑`） | 解绑设备（多台时需指定序号） |
-| `/dglab strength [序号] <A\|B> <0-200>`（或 `/电击 强度`） | 设置通道强度值（序号省略则操作 #1） |
-| `/dglab up [序号] <A\|B> [步进]`（或 `/电击 增加`） | 增加强度（默认+5） |
-| `/dglab down [序号] <A\|B> [步进]`（或 `/电击 减少`） | 减少强度（默认-5） |
-| `/dglab shock [序号] <A\|B> [强度] [波形] [秒数]`（或 `/电击 开始`） | 开始电击（设置强度并发送波形） |
-| `/dglab stop [序号] [A\|B]`（或 `/电击 停止`） | 停止电击（强度归零+清空波形，不指定通道则停止该设备全部） |
-| `/dglab pulse [序号] <A\|B> <预设名\|HEX> [秒数]`（或 `/电击 波形`） | 发送波形数据（默认5秒） |
-| `/dglab clear [序号] <A\|B>`（或 `/电击 清空`） | 清空波形队列 |
-| `/dglab feedback [序号]`（或 `/电击 反馈`） | 查看设备实时强度和反馈按钮状态 |
-| `/dglab permission [on\|off]`（或 `/电击 权限`） | 查看/切换权限隔离（默认开启，user级：控制该用户全部设备） |
-| `/dglab status`（或 `/电击 状态`） | 查看全部设备的绑定和连接状态 |
-| `/dglab info`（或 `/电击 信息`） | 查看全部设备的详细信息 |
-| `/dglab help`（或 `/电击 帮助`） | 显示帮助信息 |
-
-> 💡 **多设备说明**：同一用户可绑定多台设备，用序号（1/2/3...）区分。序号可省略，默认操作 #1 设备。单设备用户无需关心序号，行为与单设备时完全一致。控制他人设备示例：`/dglab strength @用户ID 2 A 50`。
+| `/dglab bind [服务器地址]`（`绑定`） | 绑定新设备（生成二维码供 APP 扫描，支持多设备追加） |
+| `/dglab unbind [序号]`（`解绑`） | 解绑设备（多台时需指定序号） |
+| `/dglab strength [序号] <A\|B> <0-200>`（`强度`） | 设置通道强度（序号省略则操作 #1） |
+| `/dglab up [序号] <A\|B> [步进]`（`增加`） | 增加强度（默认 +5） |
+| `/dglab down [序号] <A\|B> [步进]`（`减少`） | 减少强度（默认 -5） |
+| `/dglab shock [序号] <A\|B> [强度] [波形] [秒数]`（`开始`） | 开始电击 |
+| `/dglab stop [序号] [A\|B]`（`停止`） | 停止电击（强度归零 + 清空波形） |
+| `/dglab pulse [序号] <A\|B> <预设\|HEX> [秒数]`（`波形`） | 发送波形数据（默认 5 秒） |
+| `/dglab clear [序号] <A\|B>`（`清空`） | 清空波形队列 |
+| `/dglab feedback [序号]`（`反馈`） | 查看实时强度和反馈按钮状态 |
+| `/dglab permission [on\|off]`（`权限`） | 查看/切换权限隔离（默认开启） |
+| `/dglab status`（`状态`） | 查看全部设备绑定与连接状态 |
+| `/dglab info`（`信息`） | 查看全部设备详细信息 |
+| `/dglab help`（`帮助`） | 显示帮助 |
+
+> 💡 **多设备**：同一用户可绑定多台设备，用序号（1/2/3…）区分，省略默认操作 #1。控制他人设备示例：`/dglab strength @用户ID 2 A 50`。
+
+#### 波形预设
+
+| 预设 | 效果 | 预设 | 效果 |
+| --- | --- | --- | --- |
+| `breathe` | 缓慢渐强渐弱 | `needle` | 高频持续尖刺 |
+| `pulse` | 快速间歇脉冲 | `throb` | 低频缓慢起伏 |
+| `wave` | 连续波浪起伏 | `chaos` | 强弱随机交替 |
+| `tap` | 短促单次敲击 | `heartbeat` | 双拍心跳节奏 |
 
 #### 使用流程
 
-```
+```text
 1. 绑定设备
    /dglab bind ws://192.168.1.100:9999
-   
-2. 使用 DG-LAB APP 扫描二维码完成绑定
-
+2. 用 DG-LAB APP 扫描二维码完成绑定
 3. 控制设备
-   /dglab shock A 50 breathe 10  # A通道开始电击（强度50，呼吸波形，10秒）
-   /dglab strength A 50     # 仅设置A通道强度为50
-   /dglab pulse A wave 5    # 仅发送波浪波形到A通道（5秒）
-   /dglab up B 10           # B通道强度增加10
-   /dglab stop              # 停止所有输出
-   /dglab stop A            # 仅停止A通道
-
+   /dglab shock A 50 breathe 10   # A通道电击（强度50，呼吸波形，10秒）
+   /dglab strength A 50           # 仅设置A通道强度
+   /dglab pulse A wave 5          # 发送波浪波形5秒
+   /dglab up B 10                 # B通道强度+10
+   /dglab stop                    # 停止所有输出
 4. 查看状态
-   /dglab status            # 查看连接状态
-   /dglab feedback          # 查看实时强度和反馈
-
-5. 解绑设备（可选）
-   /dglab unbind            # 解绑当前设备
+   /dglab status
+   /dglab feedback
+5. 解绑（可选）
+   /dglab unbind
 ```
 
-#### 参数说明
+#### WebUI 控制面板
 
-**强度控制参数：**
-
-| 参数 | 类型 | 范围 | 说明 |
-| --- | --- | --- | --- |
-| `通道` | string | A 或 B | A/B 双通道独立控制 |
-| `强度值` | int | 0-200 | 目标强度值（0=关闭，200=最大） |
-| `步进值` | int | 1-200 | 每次调整的幅度（默认5） |
-
-**电击控制参数（`/dglab shock`）：**
-
-| 参数 | 类型 | 范围 | 说明 |
-| --- | --- | --- | --- |
-| `通道` | string | A 或 B | 必填，指定输出通道 |
-| `强度` | int | 0-200 | 可选，默认20 |
-| `波形` | string | 预设名 | 可选，默认pulse。可选: breathe, pulse, wave, tap, heartbeat, needle, throb, chaos |
-| `秒数` | int | 1-60 | 可选，持续时间，默认5秒 |
-
-**波形控制参数（`/dglab pulse`）：**
-
-| 参数 | 类型 | 范围 | 说明 |
-| --- | --- | --- | --- |
-| `通道` | string | A 或 B | 必填，指定输出通道 |
-| `预设名/HEX` | string | 见下方 | 必填，波形预设名或16位HEX数据 |
-| `秒数` | int | 1-60 | 可选，持续时间，默认5秒 |
-
-**可用波形预设：**
-
-| 预设名 | 效果 |
-| --- | --- |
-| `breathe` | 缓慢渐强渐弱 |
-| `pulse` | 快速间歇脉冲 |
-| `wave` | 连续波浪起伏 |
-| `tap` | 短促有力的单次敲击 |
-| `heartbeat` | 双拍心跳节奏（lub-dub） |
-| `needle` | 高频持续尖刺（针扎感） |
-| `throb` | 低频缓慢起伏（厚重深沉） |
-| `chaos` | 强弱频率随机交替（不可预测） |
-
-**绑定参数：**
-
-| 参数 | 类型 | 说明 | 示例 |
-| --- | --- | --- | --- |
-| `服务器地址` | string | DG-LAB 中转服务器地址 | `ws://192.168.1.100:9999` |
-
-> 💡 **提示**：如果配置了默认服务器地址，`/dglab bind` 可省略地址参数。
-
-#### 返回结果示例
-
-**绑定成功：**
-```
-🔗 DG-LAB 设备绑定
-
-👤 用户: TestUser
-🖥️  服务器: ws://192.168.1.100:9999
-🆔 客户端ID: a1b2c3d4...
-📱 请使用 DG-LAB APP 扫描下方二维码完成绑定
-
-📲 二维码内容:
-`https://www.dungeon-lab.com/app-download.php#DGLAB-SOCKET#ws://192.168.1.100:9999/a1b2c3d4...`
-
-⏳ 等待APP扫码绑定中...
-💡 绑定成功后将自动通知您
-```
-
-**查看状态：**
-```
-📊 DG-LAB 设备状态
-
-🔗 绑定状态: ✅ 已绑定
-🖥️  服务器: ws://192.168.1.100:9999
-🆔 客户端ID: a1b2c3d4e5f6...
-🕐 绑定时间: 2025-01-15 10:30:00
-🔄 最后活跃: 2025-01-15 14:25:30
-📡 连接状态: 🟢 bound
-⏱️  连接时长: 14340 秒 (239 分钟)
-😴 空闲时长: 120 秒
-
-📈 系统活跃连接数: 3
-```
+启用 `dglab_webui_enabled`（默认开启）后，插件会在 `dglab_webui_port`（默认 9178）启动一个浏览器远程控制界面，可在网页上查看/控制设备，Material Design 3 风格。
 
 #### 高级特性
 
-**多用户隔离：**
-- 每个用户拥有独立的设备连接和绑定关系
-- 用户间操作完全隔离，互不影响
-- 支持最多 50 个并发连接
+- **多用户隔离**：每个用户独立连接与绑定，互不影响，支持最多 50 个并发连接。
+- **自动重连**：操作失败自动重试（最多 2 次）；连接断开尝试重建；空闲超 5 分钟自动清理。
+- **安全机制**：所有参数严格校验，操作超时保护，强度限制 0-200。
 
-**自动重连与容错：**
-- 操作失败时自动重试（最多 2 次）
-- 连接断开时尝试重新建立
-- 空闲超过 5 分钟的连接自动清理（释放资源）
-
-**安全机制：**
-- 所有输入参数严格校验（范围、格式、类型）
-- 操作超时保护（防止长时间阻塞）
-- 强度值限制在安全范围内 (0-200)
-
-#### 注意事项
-
-- ⚠️ **强度值范围**：必须在 0-200 之间，请根据个人耐受度调整
-- ⚠️ **APP 要求**：仅支持 **郊狼脉冲主机 3.0**
-- ⚠️ **网络要求**：确保服务器可访问，建议使用局域网或公网服务器
-- ⚠️ **二维码有效期**：绑定二维码在会话期间有效，超时需重新生成
-- ⚠️ **权限隔离**：您的设备仅您可控制，其他用户无法访问
+> ⚠️ 仅支持**郊狼脉冲主机 3.0**；二维码在会话期间有效，超时需重新生成；建议局域网用 `ws://`，公网用 `wss://`。
 
 ---
 
-## ⚙️ 配置说明
+## 🧠 跨群聊记忆
 
-在 AstrBot 管理面板中可配置以下参数：
+可选功能：在同一平台实例下的所有群聊之间共享一份**持久化**记忆，作为额外上下文注入 LLM 请求，让机器人在不同群之间拥有连续语境。
 
-**路径**：AstrBot 管理面板 → 插件管理 → astrbot\_plugin\_pixiv → 配置
+- **存储**：`data/currentcortex_cross_group.json`，按平台实例（`platform_id`）分桶，重启后保留。
+- **记录**：群聊中的非命令消息会被格式化为 `[昵称/HH:MM:SS]: 文本` 并滚动追加（超过上限自动裁剪旧记录）。
+- **注入**：群消息触发 LLM 请求时，自动把同平台其他群的最近若干条记录以 `<system_reminder>` 注入用户消息部分。
+- **斜杠命令不记录**：命令消息不会进入记忆。
 
-> 🔐 **【重要】LeiZ API 鉴权方式升级公告**
->
-> 自即日起，LeiZ API 全面升级鉴权方式：**所有接口（含免费接口）均需在请求中携带 API Key**，请求头格式为 `x-api-key: <API-Key>`。未配置将导致 Pixiv、每日一言、天气查询、男娘图片、网易云音乐点歌、JMComic 漫画等全部 LeiZ 接口命令不可用。
->
-> 请在下方配置项中填写 `leiz_api_key` 后保存并重启插件。
->
-> **旧版配置迁移**：v1.3.x 及更早版本中针对男娘图片使用的 `femboy_api_key`（旧 `x-api-key`）已被废弃并合并为统一的 `leiz_api_key`。升级后如未填写 `leiz_api_key` 但保留了旧的 `femboy_api_key`，插件会自动将其作为统一 API Key 使用并提示迁移，建议尽快在配置面板改填到 `leiz_api_key` 字段。
+| 配置项 | 默认值 | 说明 |
+| --- | --- | --- |
+| `cross_group_enable` | false | 是否启用跨群聊记忆 |
+| `cross_group_max_cnt` | 500 | 每个平台保留的最大记录条数 |
+| `cross_group_inject_cnt` | 30 | 每次回复注入到 LLM 的最近记录条数 |
 
-### Pixiv 相关配置
+> ⚠️ 开启后会向 LLM 提供其他群的聊天内容，请确认符合你的隐私预期与各群成员的知情同意。
+
+---
+
+## ⚡ 接口连通性测试 (`/apitest`)
+
+一键诊断全部 LeiZ 上游接口的鉴权与连通状态，快速区分「接口异常」还是「代码问题」。
+
+```text
+/apitest          # 并行探测全部 6 个接口
+/apitest help     # 显示帮助
+```
+
+6 个接口（Pixiv / 一言 / 天气 / 男娘 / 点歌 / JMComic）并行探测，每个用最轻量的只读请求，不消耗图片/音频下载流量。状态含义：
+
+| 图标 | 状态 | 含义 |
+| --- | --- | --- |
+| 🟢 | 正常 | 接口返回成功 |
+| 🟡 | HTTP 异常 | 收到非 200（如 401 鉴权失败 / 402 配额 / 5xx） |
+| 🔴 | 网络/超时 | 连接失败或超过配置超时 |
+| ⚫ | 跳过 | 对应客户端未初始化（通常未配置 API Key） |
+
+---
+
+## ⚙️ 配置项
+
+路径：AstrBot 管理面板 → 插件管理 → 本插件 → 配置。
+
+### Pixiv 相关
 
 | 配置项 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `default_r18` | int | 0 | 默认 R18 模式（0=全年龄, 1=仅R18, 2=混合） |
 | `default_num` | int | 1 | 默认每次获取的图片数量（1-20） |
-| `image_proxy` | string | pixiv.bileizhen.top | 图片反代域名 |
 | `default_size` | string | regular | 默认图片尺寸（original/regular/small/thumb/mini） |
+| `image_proxy` | string | pixiv.bileizhen.top | 图片反代域名 |
 | `exclude_ai` | bool | false | 默认是否排除 AI 生成作品 |
 
-### 通用配置
+### 通用 / 鉴权
 
 | 配置项 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
+| `leiz_api_key` | string | （空） | **LeiZ API 统一密钥**（请求头 `x-api-key`），**必填**，所有 LeiZ 接口均需 |
 | `request_timeout` | int | 15 | API 请求超时时间（秒），影响所有功能 |
-| `leiz_api_key` | string | （空） | **LeiZ API 统一密钥**（请求头 `x-api-key`）。所有接口（含免费接口）均需携带，**必填**才能使用 Pixiv/一言/天气/男娘/点歌/JMComic 等全部 LeiZ 接口命令 |
-| `jm_image_max_bytes` | int | 2097152 | JMComic 章节单张图片体积阈值（字节）。图片统一转 JPEG；超过该体积再逐档降质压缩 |
-| `jm_page_size` | int | 20 | JMComic 章节图片每条命令（单条合并转发）下发的张数；整章超过时发送 `/jm con` 续看。遇转发失败可调小 |
 
-### DG-LAB 配置
-
-> ⚠️ **使用 DG-LAB 功能前，必须先部署并运行 [DG-LAB Socket V2 中转服务器](https://github.com/DG-LAB-OPENSOURCE/DG-LAB-OPENSOURCE)**。
+### JMComic
 
 | 配置项 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `dglab_server_url` | string | （空） | DG-LAB 中转服务器地址（如 `ws://192.168.1.100:9999`） |
+| `jm_image_max_bytes` | int | 2097152 | 章节单张图片体积阈值（字节），超此再逐档降质压缩 |
+| `jm_page_size` | int | 20 | 章节图片每条命令下发的张数，遇转发失败可调小 |
+
+### DG-LAB
+
+> ⚠️ 使用 DG-LAB 功能前，必须先部署并运行 [DG-LAB Socket V2 中转服务器](https://github.com/DG-LAB-OPENSOURCE/DG-LAB-OPENSOURCE)。
+
+| 配置项 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `dglab_server_url` | string | （空） | 中转服务器地址（如 `ws://192.168.1.100:9999`） |
 | `dglab_heartbeat_interval` | int | 60 | 心跳间隔（秒），建议 30-120 |
-| `dglab_auto_connect` | bool | false | 是否在插件启动时自动连接（一般设为 false） |
+| `dglab_auto_connect` | bool | false | 插件启动时是否自动连接（一般设为 false） |
+| `dglab_webui_enabled` | bool | true | 是否启用 WebUI 控制面板 |
+| `dglab_webui_port` | int | 9178 | WebUI 监听端口 |
 
-#### 配置示例
+<details>
+<summary><b>📦 DG-LAB 中转服务器部署</b></summary>
 
-在 AstrBot 管理面板的插件配置中直接填写：
-
-| 配置项 | 填写示例 |
-| --- | --- |
-| `dglab_server_url` | `ws://192.168.1.100:9999` |
-| `dglab_heartbeat_interval` | `60` |
-| `dglab_auto_connect` | `false` |
-
-#### 配置迁移指南
-
-从旧版本（v1.2.0 及更早）的 JSON 格式配置迁移到新独立配置项：
-
-**旧格式（已弃用）：**
-```json
-{
-  "dglab": {
-    "server_url": "ws://your-server:9999",
-    "heartbeat_interval": 60,
-    "auto_connect": false
-  }
-}
-```
-
-**新格式：**
-直接在配置面板中填写以下三个独立项：
-- `dglab_server_url` → 填入旧 `server_url` 的值
-- `dglab_heartbeat_interval` → 填入旧 `heartbeat_interval` 的值（默认 60）
-- `dglab_auto_connect` → 填入旧 `auto_connect` 的值（默认 false）
-
-**兼容性说明：**
-插件仍会检测旧版 `dglab` JSON 配置。如果新的独立配置项留空但旧配置存在，插件会自动读取旧配置并给出迁移提示。建议尽快手动迁移以获得更好的配置体验。
-
-#### 部署中转服务器
-
-1. **获取服务器代码**：访问 [DG-LAB-OPENSOURCE](https://github.com/DG-LAB-OPENSOURCE/DG-LAB-OPENSOURCE)
-2. **安装依赖并启动**：
+1. 获取服务器代码：[DG-LAB-OPENSOURCE](https://github.com/DG-LAB-OPENSOURCE/DG-LAB-OPENSOURCE)
+2. 安装依赖并启动：
    ```bash
    cd socket/v2/backend
    npm install
    npm start
    ```
-3. **默认端口**：`9999`（可通过 `.env` 文件修改）
-4. **网络要求**：确保服务器可被 AstrBot 和 DG-LAB APP 访问
+3. 默认端口 `9999`（可通过 `.env` 修改）
+4. 确保 AstrBot 与 DG-LAB APP 均可访问该服务器
 
-> 💡 **提示**：局域网部署使用 `ws://`，公网部署建议使用 `wss://`（更安全）。
+</details>
+
+<details>
+<summary><b>🔄 从旧版 DG-LAB JSON 配置迁移</b></summary>
+
+v1.2.0 及更早版本使用 JSON 字符串配置（已弃用）：
+
+```json
+{ "dglab": { "server_url": "ws://your-server:9999", "heartbeat_interval": 60, "auto_connect": false } }
+```
+
+新格式直接填三个独立项：`dglab_server_url`、`dglab_heartbeat_interval`、`dglab_auto_connect`。插件仍会检测旧版 `dglab` JSON 配置：若新项留空但旧配置存在，会自动读取并提示迁移。建议尽快手动迁移。
+
+</details>
+
+### 跨群聊记忆
+
+见 [🧠 跨群聊记忆](#-跨群聊记忆) 章节。
+
+---
+
+## 🔌 Qtine 兼容包
+
+本插件同时提供 **Qtine / OneBot v11** 兼容包，沿用标准外部插件结构。
+
+将仓库中的 `qtine/` 目录复制（或软链接）到 Qtine 外部插件目录（目录名应为 `currentcortex`）：
+
+```bash
+cp -a qtine/ /path/to/Qtine/plugins/currentcortex/
+```
+
+- 目录内必须保留 `main.py`、`data.json` 与 `requirements.txt`。
+- Qtine 配置项会在面板中注册（含 `_conf_schema.json` 所有默认参数），持久化 JSON 记录和 DG-LAB 二维码保存在 `qtine/data/`。
+- 富媒体通过 **OneBot v11 CQ 码**发送（图片 `[CQ:image]`、语音 `[CQ:record]`、文件 `[CQ:file]`）。需使用支持本地 `file://` 与 CQ 码的 QQ OneBot 实现（如 NapCat）。JMComic 合并转发会降级为一条文本 + 顺序图片 CQ 码。
+- 音乐语音仍依赖系统 `ffmpeg`。若适配器不支持 record/file CQ 码，插件会保留文本链接或提示。
+
+---
 
 ## ❓ 常见问题
 
-### Q: 安装后插件无法加载？
+<details>
+<summary><b>安装后插件无法加载？</b></summary>
 
-请检查：
 1. Python 版本是否 >= 3.10
-2. 是否已安装依赖：`pip install aiohttp>=3.8.0`
+2. 是否已安装依赖：`pip install aiohttp>=3.8.0`（DG-LAB 还需 `websockets>=10.0`）
 3. AstrBot 版本是否 >= 3.4.0
 4. 查看 AstrBot 日志中的错误信息
 
-### Q: Pixiv 图片无法显示？
+</details>
 
-可能原因：
-1. **反代域名不可用**：尝试更换 `image_proxy` 配置项
-2. **网络连接问题**：检查服务器是否能访问外网
-3. **API 服务异常**：稍后重试
+<details>
+<summary><b>调用命令提示「功能未启用 / 未配置 API Key」？</b></summary>
 
-### Q: `/femboy` 提示功能未启用？
+需在配置面板填写 `leiz_api_key`（LeiZ API 统一密钥），保存后重启插件。可用 `/apitest` 验证各接口连通性。Pixiv / 一言 / 天气 / 男娘 / 点歌 / JMComic 均依赖此 Key。
 
-需要在插件配置面板中填写 `leiz_api_key` 字段（LeiZ API 统一密钥），保存配置后重启插件即可。
+</details>
 
-### Q: 如何排除 AI 生成的 Pixiv 作品？
+<details>
+<summary><b>Pixiv 图片无法显示？</b></summary>
 
-两种方式：
-1. **全局排除**：在配置中设置 `exclude_ai` 为 `true`
-2. **单次排除**：在命令中使用 `excludeAI:true`，如 `/pixiv tag:萝莉 excludeAI:true`
+1. 反代域名不可用：尝试更换 `image_proxy` 配置项
+2. 网络连接问题：检查服务器能否访问外网
+3. API 服务异常：稍后重试
 
-### Q: 请求超时怎么办？
+</details>
 
-1. 在配置中增加 `request_timeout` 的值（单位：秒）
-2. 检查网络连接状况
-3. 如果频繁超时，可能是 API 服务繁忙，建议稍后重试
+<details>
+<summary><b>如何排除 AI 生成的 Pixiv 作品？</b></summary>
 
-### Q: 天气查询支持哪些城市？
+1. **全局排除**：配置 `exclude_ai` 为 `true`
+2. **单次排除**：命令中使用 `excludeAI:true`，如 `/pixiv tag:萝莉 excludeAI:true`
 
-支持中国主要城市，建议使用中文城市名称（如"广州市"、"北京"）。城市名称最长 50 个字符。
+</details>
 
-### Q: DG-LAB 功能无法使用？
+<details>
+<summary><b>请求超时怎么办？</b></summary>
 
-请检查：
-1. **是否安装依赖**：`pip install websockets>=10.0`
-2. **是否配置服务器地址**：在插件配置中填写 `dglab_server_url`
-3. **中转服务器是否运行**：确保 DG-LAB Socket V2 服务器已启动并可访问
-4. **网络连通性**：AstrBot 服务器能否连接到中转服务器
-5. **查看日志**：检查 AstrBot 日志中的 `[DGLab]` 相关错误信息
+适当增大 `request_timeout`（单位秒），检查网络状况；频繁超时多为 API 繁忙，建议稍后重试。
 
-### Q: DG-LAB 绑定失败？
+</details>
 
-可能原因：
-1. **APP 未扫码**：二维码生成后需在有效期内用 APP 扫描
-2. **服务器地址错误**：确认地址格式正确（如 `ws://host:port`）
-3. **网络不通**：检查防火墙和网络配置
-4. **APP 版本过低**：确保使用支持 Socket V2 的 APP 版本
+<details>
+<summary><b>天气查询支持哪些城市？</b></summary>
 
-### Q: 多人同时使用会冲突吗？
+支持中国主要城市，建议使用中文城市名（如「广州市」「北京」），最长 50 字符。
 
-不会。每个用户拥有独立的设备绑定和连接，操作完全隔离。系统支持最多 50 个并发连接。
+</details>
 
-### Q: DG-LAB 连接断开怎么办？
+<details>
+<summary><b>DG-LAB 功能无法使用 / 绑定失败？</b></summary>
 
-1. 系统会自动尝试重连（最多 2 次）
-2. 如果仍失败，使用 `/dglab unbind` 解绑后重新 `/dglab bind`
-3. 检查中转服务器是否正常运行
-4. 使用 `/dglab status` 查看当前连接状态
+1. 是否安装依赖：`pip install websockets>=10.0`
+2. 是否配置 `dglab_server_url`，且中转服务器正在运行、可访问
+3. 二维码生成后需在有效期内用 APP 扫描
+4. 确认 APP 版本支持 Socket V2，且仅支持**郊狼脉冲主机 3.0**
+5. 查看 AstrBot 日志中 `[DGLab]` 相关错误
 
-## 🔧 错误处理
+</details>
 
-插件对各类异常均有友好提示：
+<details>
+<summary><b>DG-LAB 连接断开怎么办？</b></summary>
+
+系统会自动重连（最多 2 次）；仍失败可用 `/dglab unbind` 解绑后重新 `/dglab bind`，并用 `/dglab status` 查看状态。
+
+</details>
+
+<details>
+<summary><b>多人同时使用会冲突吗？</b></summary>
+
+不会。每个用户拥有独立的设备绑定与连接，操作完全隔离，支持最多 50 个并发连接。
+
+</details>
+
+### 错误处理一览
 
 | 错误类型 | 可能原因 | 解决方案 |
 | --- | --- | --- |
 | 网络错误 | 网络连接失败 | 检查网络连接 |
-| 请求超时 | API 响应慢 | 增加 timeout 配置或稍后重试 |
-| HTTP 错误 | API 服务异常 | 检查 API 服务状态 |
+| 请求超时 | API 响应慢 | 增大 `request_timeout` 或稍后重试 |
+| HTTP 错误 | API 服务异常（401/402/5xx 等） | 检查 API Key / 服务状态 |
 | 参数错误 | 命令格式不正确 | 发送 `/xxx help` 查看帮助 |
 | 无结果 | 未找到匹配内容 | 更换搜索参数 |
 | 数据格式异常 | API 返回异常数据 | 稍后重试 |
 
-## 📊 项目结构
-
-```
-astrbot_plugin_currentcortex/
-├── main.py                      # 主程序文件（包含所有功能实现及插件入口）
-├── dglab_client.py              # DG-LAB Socket V2 WebSocket 客户端封装
-├── dglab_device_store.py        # DG-LAB 设备绑定关系持久化存储
-├── dglab_connection_pool.py     # DG-LAB 连接池与状态管理
-├── dglab_commands.py            # DG-LAB 命令处理器（参数解析、校验、执行）
-├── test_dglab_integration.py    # DG-LAB 模块集成测试脚本
-├── metadata.yaml                # 插件元数据
-├── _conf_schema.json            # 配置模式定义
-├── requirements.txt             # Python 依赖
-├── README.md                    # 项目文档
-└── .gitignore                   # Git 忽略规则
-```
+---
 
 ## 🛠️ 技术架构
 
+### 项目结构
+
+```text
+astrbot_plugin_currentcortex/
+├── main.py                      # 主程序：所有命令注册与 API 客户端
+├── cross_group_memory.py        # 跨群聊记忆持久化存储
+├── media_parser.py              # 小红书/B站/抖音 媒体解析
+├── media_cmds.py                # 媒体命令辅助
+├── dglab_client.py              # DG-LAB WebSocket 客户端封装
+├── dglab_device_store.py        # DG-LAB 设备绑定关系持久化
+├── dglab_connection_pool.py     # DG-LAB 连接池与状态管理
+├── dglab_commands.py            # DG-LAB 命令处理器
+├── dglab_webui.py               # DG-LAB WebUI 控制面板
+├── dglab_user_store.py          # DG-LAB 用户存储
+├── dglab_permission_store.py    # DG-LAB 权限存储
+├── dglab_post_store.py          # DG-LAB 投稿广场存储
+├── dglab_email_store.py         # DG-LAB 邮箱存储
+├── dglab_turnstile_store.py     # DG-LAB Turnstile 存储
+├── dglab_chat_store.py          # DG-LAB 聊天存储
+├── qtine/                       # Qtine / OneBot v11 兼容包
+├── metadata.yaml                # 插件元数据
+├── _conf_schema.json            # 配置模式定义
+├── requirements.txt             # Python 依赖
+└── README.md                    # 项目文档
+```
+
 ### 核心模块
 
-**Pixiv 相关：**
-- **PixivAPIClient**：Pixiv API 客户端，支持 GET/POST 请求，处理重定向和 JSON 响应
-- **HitokotoAPIClient**：一言 API 客户端，支持分类筛选
-- **WeatherAPIClient**：天气 API 客户端，解析当前天气和未来预报
-- **FemboyAPIClient**：男娘图片 API 客户端，统一使用 `x-api-key` 鉴权
-- **NeteaseAPIClient**：网易云音乐 API 客户端，支持歌曲获取和搜索
-- **JMComicAPIClient**：JMComic 漫画 API 客户端，支持搜索、详情、章节图片获取
-- **CommandParser**：命令解析器，支持 `key:value` 格式参数和快捷语法
+**内容获取与解析：**
+- **PixivAPIClient** ([main.py](main.py))：Pixiv API 客户端，按过滤参数自动路由 GET 随机 / POST 筛选接口
+- **HitokotoAPIClient** / **WeatherAPIClient** / **FemboyAPIClient**：一言 / 天气 / 男娘 API 客户端
+- **NeteaseAPIClient**：网易云客户端，点歌带指数退避重试
+- **JMComicAPIClient**：JMComic 客户端（搜索 / 详情 / 章节）
+- **MediaParserManager** ([media_parser.py](media_parser.py))：小红书 / B站 / 抖音 链接解析
+- **CommandParser** ([main.py](main.py))：`key:value` 参数与快捷语法解析器
 
 **DG-LAB 设备管理：**
-- **DGLabClient** ([dglab_client.py](dglab_client.py))：WebSocket 客户端封装，实现连接管理、消息收发、心跳保活
-- **DeviceStore** ([dglab_device_store.py](dglab_device_store.py))：用户-设备绑定关系持久化存储（JSON 文件），线程安全
-- **DeviceConnectionPool** ([dglab_connection_pool.py](dglab_connection_pool.py))：连接池管理器，支持多用户并发、连接复用、自动重连、空闲清理、超时保护
-- **DGLabCommandHandler** ([dglab_commands.py](dglab_commands.py))：命令处理器，负责参数解析、合法性校验、操作执行、结果格式化
+- **DGLabClient** ([dglab_client.py](dglab_client.py))：WebSocket 客户端，连接管理 / 消息收发 / 心跳保活
+- **DeviceStore** ([dglab_device_store.py](dglab_device_store.py))：用户-设备绑定关系持久化（线程安全）
+- **DeviceConnectionPool** ([dglab_connection_pool.py](dglab_connection_pool.py))：连接池，多用户并发 / 连接复用 / 自动重连 / 空闲清理
+- **DGLabCommandHandler** ([dglab_commands.py](dglab_commands.py))：命令解析 / 校验 / 执行 / 格式化
+- **DGLabWebUI** ([dglab_webui.py](dglab_webui.py))：浏览器远程控制面板
 
-**主插件：**
+**主插件与记忆：**
 - **CurrentCortexPlugin(Star)** ([main.py](main.py))：主插件类，集成所有功能并注册命令
+- **CrossGroupMemoryStore** ([cross_group_memory.py](cross_group_memory.py))：跨群聊共享记忆，JSON 持久化
 
 ### 设计特点
 
-- **异步架构**：基于 asyncio 和 aiohttp/websockets，非阻塞 I/O
-- **模块化设计**：DG-LAB 功能独立为 4 个模块，职责清晰，便于维护
-- **统一接口**：所有 API 客户端遵循相同的设计模式
-- **完善日志**：详细的调试和错误日志，便于排查问题
-- **健壮性**：全面的异常处理和参数校验
-- **数据持久化**：DG-LAB 绑定数据存储在 `data/dglab_bindings.json`（符合 AstrBot 规范）
+- **异步架构**：基于 `asyncio` + `aiohttp` / `websockets`，非阻塞 I/O
+- **模块化设计**：DG-LAB 功能独立为多个模块，职责清晰
+- **统一接口**：所有 API 客户端遵循相同设计模式
+- **健壮容错**：全面的异常处理、参数校验、按需重试
+- **数据持久化**：DG-LAB 绑定存于 `data/dglab_bindings.json`，跨群记忆存于 `data/currentcortex_cross_group.json`（均符合 AstrBot 规范）
 - **资源管理**：连接池自动清理空闲连接，防止资源泄漏
 - **多租户隔离**：每个用户独立连接，操作互不干扰
 
-## 📄 开源协议
+---
 
-MIT License
+## 📄 开源协议与致谢
 
-## 🙏 致谢
+**MIT License**
 
-- [LeiZ API](https://api.bileizhen.top) — 提供 Pixiv、一言、天气、男娘图片、网易云音乐等 API 服务
+致谢：
+
+- [LeiZ API](https://api.bileizhen.top) — 提供 Pixiv / 一言 / 天气 / 男娘 / 网易云 / JMComic 等 API 服务
 - [AstrBot](https://github.com/AstrBot) — 聊天机器人框架
 - [DG-LAB-OPENSOURCE](https://github.com/DG-LAB-OPENSOURCE/DG-LAB-OPENSOURCE) — DG-LAB Socket V2 协议与中转服务器
 
 ---
 
-**版本**：v1.3.0  
-**更新日期**：2026-05-17  
-**新增功能**：JMComic 漫画获取（搜索、详情、章节图片、随机推荐）  
+**版本**：v1.5.0  
 **仓库**：[GitHub](https://github.com/backrooms-yrc/astrbot_plugin_currentcortex)

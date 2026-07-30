@@ -68,5 +68,20 @@
     "description": "CurrentCortex WebUI 监听端口号",
     "type": "int",
     "default": 9178
+  },
+  "cross_group_enable": {
+    "description": "启用跨群聊记忆（同一平台实例下所有群聊共享一份持久化记忆，重启后保留）",
+    "type": "bool",
+    "default": false
+  },
+  "cross_group_max_cnt": {
+    "description": "跨群聊记忆每个平台实例保留的最大记录条数",
+    "type": "int",
+    "default": 500
+  },
+  "cross_group_inject_cnt": {
+    "description": "每次回复时注入到 LLM 的最近共享记忆条数",
+    "type": "int",
+    "default": 30
   }
 }

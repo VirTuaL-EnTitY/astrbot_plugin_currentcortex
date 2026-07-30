@@ -27,6 +27,10 @@ from .media_parser import (
     MediaParserError,
     URLExtractor,
 )
+from .cross_group_memory import CrossGroupMemoryStore
+from astrbot.api.provider import ProviderRequest
+from astrbot.core.agent.message import TextPart
+from astrbot.api.platform import MessageType
 
 
 API_BASE_URL = "https://api.bileizhen.top/api/pixiv"
@@ -404,15 +408,16 @@ class PixivAPIClient:
         if "excludeAI" in clean_params:
             clean_params["excludeAI"] = bool(clean_params["excludeAI"])
 
+        # 路由判定：只有用户显式提供「过滤参数」时才走 POST（带筛选的 JSON 接口）；
+        # r18/num/size 是随机与搜索都通用、且 _build_request_params 总会填充默认值的
+        # 参数，不能用于判定路由——否则纯随机请求也会被错误地强制走 POST，导致每次
+        # 返回固定的同一张图（随机图固定）。
         has_filter_params = any(
             k in clean_params
             for k in (
-                "r18",
-                "num",
                 "tag",
                 "keyword",
                 "uid",
-                "size",
                 "excludeAI",
                 "aspectRatio",
                 "dateAfter",
@@ -425,8 +430,10 @@ class PixivAPIClient:
         ) as session:
             try:
                 if has_filter_params:
+                    logger.info("[Pixiv] 有过滤参数，走 POST 筛选接口")
                     resp = await self._post_request(session, clean_params)
                 else:
+                    logger.info("[Pixiv] 无过滤参数，走 GET 随机接口")
                     resp = await self._get_request(session, clean_params)
 
                 async with resp:
@@ -487,8 +494,10 @@ class PixivAPIClient:
         for k, v in params.items():
             if k == "size" and isinstance(v, str):
                 body[k] = [v]
-            elif k == "tag" and isinstance(v, str):
-                body[k] = [v]
+            elif k == "tag":
+                # CommandParser 产出的 tag 是 list（多个 tag 参数 = AND 匹配），
+                # 单个字符串则包成 list，保证上游接收到的始终是数组形式。
+                body[k] = v if isinstance(v, list) else [v]
             else:
                 body[k] = v
         return body
@@ -826,9 +835,7 @@ class NeteaseAPIClient:
                         f"[Netease] {tag} timeout (attempt {attempt}/{self.NETEASE_MAX_ATTEMPTS})"
                     )
                 except aiohttp.ClientError as e:
-                    last_exc = NeteaseAPIError(
-                        f"网络请求失败: {str(e)}", status_code=0
-                    )
+                    last_exc = NeteaseAPIError(f"网络请求失败: {str(e)}", status_code=0)
                     logger.warning(
                         f"[Netease] {tag} network error (attempt {attempt}/{self.NETEASE_MAX_ATTEMPTS}): {e}"
                     )
@@ -882,9 +889,7 @@ class NeteaseAPIClient:
         params = {"q": query.strip()}
         logger.debug(f"[Netease] Searching songs: {query}")
 
-        data = await self._get_with_retry(
-            NETEASE_SEARCH_URL, params, "search_songs"
-        )
+        data = await self._get_with_retry(NETEASE_SEARCH_URL, params, "search_songs")
         logger.debug(
             f"[Netease] Search response keys: {list(data.keys()) if isinstance(data, dict) else type(data)}"
         )
@@ -1124,7 +1129,7 @@ _JM_CHAPTER_CURSOR_TTL = 30 * 60
     "astrbot_plugin_currentcortex",
     "Rcst20",
     "CurrentCortex 综合插件 - Pixiv 图片、每日一言、天气查询、网易云音乐、JMComic 漫画、DG-LAB 设备管理及小红书/B站/抖音媒体解析等",
-    "1.4.3",
+    "1.5.0",
 )
 class CurrentCortexPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -1204,7 +1209,6 @@ class CurrentCortexPlugin(Star):
                 api_key=leiz_api_key, timeout=self._request_timeout
             )
             logger.info("✅ LeiZ API 客户端初始化成功（统一 x-api-key 鉴权）")
-
 
         # 读取 DG-LAB 新独立配置项（优先），兼容旧版 JSON 字符串配置
         server_url = str(config.get("dglab_server_url", "")).strip()
@@ -1294,6 +1298,97 @@ class CurrentCortexPlugin(Star):
             f"size={self._default_size}, proxy={self._image_proxy}, excludeAI={self._exclude_ai}"
         )
 
+        # 跨群聊记忆：同一平台实例下所有群聊共享的持久化记忆（JSON 文件存储）
+        self._cross_group_enable = bool(config.get("cross_group_enable", False))
+        self._cross_group_max_cnt = max(1, int(config.get("cross_group_max_cnt", 500)))
+        self._cross_group_inject_cnt = max(
+            0, int(config.get("cross_group_inject_cnt", 30))
+        )
+        self._cross_group_store: "CrossGroupMemoryStore | None" = None
+        if self._cross_group_enable:
+            try:
+                self._cross_group_store = CrossGroupMemoryStore(data_dir="data")
+                logger.info(
+                    f"[CrossGroupMemory] 已启用跨群聊记忆 "
+                    f"(max_cnt={self._cross_group_max_cnt}, inject_cnt={self._cross_group_inject_cnt})"
+                )
+            except Exception as e:
+                logger.warning(f"[CrossGroupMemory] 初始化失败，已禁用: {e}")
+                self._cross_group_store = None
+                self._cross_group_enable = False
+
+    def _format_cross_group_record(self, event: AstrMessageEvent) -> str:
+        """Format a group message into a single record line for cross-group memory.
+
+        Args:
+            event: The group message event.
+
+        Returns:
+            A formatted string like ``[昵称/HH:MM:SS]: 文本``.
+        """
+        import datetime as _dt
+
+        nickname = event.get_sender_name() or "未知"
+        time_str = _dt.datetime.now().strftime("%H:%M:%S")
+        text = event.message_str or ""
+        return f"[{nickname}/{time_str}]: {text}".strip()
+
+    @filter.platform_adapter_type(filter.PlatformAdapterType.ALL)
+    async def on_cross_group_message(self, event: AstrMessageEvent):
+        """记录群聊消息到跨群聊记忆（同一平台实例下所有群共享）。"""
+        if not self._cross_group_enable or self._cross_group_store is None:
+            return
+        try:
+            if event.get_message_type() != MessageType.GROUP_MESSAGE:
+                return
+            # 跳过命令消息：斜杠命令是给机器人的指令，不应作为群聊上下文记录
+            if event.get_extra("handlers_parsed_params", {}):
+                return
+            platform_id = event.get_platform_id()
+            if not platform_id:
+                return
+            text = event.message_str
+            if text is None:
+                return
+            record = self._format_cross_group_record(event)
+            if not record:
+                return
+            self._cross_group_store.record(
+                platform_id, record, self._cross_group_max_cnt
+            )
+        except Exception as e:
+            logger.error(f"[CrossGroupMemory] 记录消息失败: {e}")
+
+    @filter.on_llm_request()
+    async def on_cross_group_llm_request(
+        self, event: AstrMessageEvent, req: ProviderRequest
+    ) -> None:
+        """将同平台其他群的最近共享上下文注入 LLM 请求。"""
+        if not self._cross_group_enable or self._cross_group_store is None:
+            return
+        try:
+            if event.get_message_type() != MessageType.GROUP_MESSAGE:
+                return
+            platform_id = event.get_platform_id()
+            if not platform_id:
+                return
+            shared = self._cross_group_store.get_recent(
+                platform_id, self._cross_group_inject_cnt
+            )
+            if not shared:
+                return
+            block = (
+                "<system_reminder>"
+                "You are also active in other groups of the same platform. "
+                "Below is recent shared context from those groups:\n"
+                "--- BEGIN SHARED CONTEXT ---\n"
+                + "\n".join(shared)
+                + "\n--- END SHARED CONTEXT ---\n</system_reminder>"
+            )
+            req.extra_user_content_parts.append(TextPart(text=block))
+        except Exception as e:
+            logger.error(f"[CrossGroupMemory] 注入上下文失败: {e}")
+
     @filter.command("hitokoto", alias={"一言"})
     async def hitokoto_command(self, event: AstrMessageEvent):
         """获取随机每日一言，可按分类筛选。"""
@@ -1308,7 +1403,9 @@ class CurrentCortexPlugin(Star):
             return
 
         if not self._hitokoto_client:
-            logger.warning(f"[Hitokoto] API client not initialized for user {user_name}")
+            logger.warning(
+                f"[Hitokoto] API client not initialized for user {user_name}"
+            )
             yield event.plain_result(_format_api_key_not_configured("每日一言"))
             return
 
@@ -1608,7 +1705,9 @@ class CurrentCortexPlugin(Star):
         if response_type == "redirect":
             url = result.get("url", "")
             caption = "👗 随机男娘图片"
-            return [event.chain_result([Comp.Plain(text=caption), Comp.Image(file=url)])]
+            return [
+                event.chain_result([Comp.Plain(text=caption), Comp.Image(file=url)])
+            ]
 
         if response_type == "json":
             data = result.get("data", {})
@@ -1802,7 +1901,9 @@ class CurrentCortexPlugin(Star):
             return
 
         if not self._netease_client:
-            logger.warning(f"[PlaySong] API client not initialized for user {user_name}")
+            logger.warning(
+                f"[PlaySong] API client not initialized for user {user_name}"
+            )
             yield event.plain_result(_format_api_key_not_configured("网易云音乐点歌"))
             return
 
@@ -1852,9 +1953,7 @@ class CurrentCortexPlugin(Star):
 
     def _parse_play_song_params(self, message: str) -> Optional[str]:
         """解析 /点歌 命令参数，剥离命令名后返回剩余的歌曲名。"""
-        cleaned = re.sub(
-            r"^[/!！]\s*点歌\s*", "", message.strip(), flags=re.IGNORECASE
-        )
+        cleaned = re.sub(r"^[/!！]\s*点歌\s*", "", message.strip(), flags=re.IGNORECASE)
         cleaned = re.sub(r"^点歌\s*", "", cleaned.strip(), flags=re.IGNORECASE)
         cleaned = cleaned.strip()
 
@@ -1994,7 +2093,9 @@ class CurrentCortexPlugin(Star):
             headers = {"User-Agent": "AstrBot-Music-Plugin/1.0"}
             if self._leiz_api_key:
                 headers["x-api-key"] = self._leiz_api_key
-            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+            async with aiohttp.ClientSession(
+                timeout=timeout, headers=headers
+            ) as session:
                 async with session.get(url) as resp:
                     if resp.status != 200:
                         logger.warning(f"[Music] 下载原始音乐失败: HTTP {resp.status}")
@@ -2038,9 +2139,7 @@ class CurrentCortexPlugin(Star):
 
             safe_name = re.sub(r"[^\w\-.]", "_", name)[:50] or "music"
             request_id = uuid.uuid4().hex[:12]
-            temp_path = os.path.join(
-                temp_dir, f"{safe_name}_{request_id}_source{ext}"
-            )
+            temp_path = os.path.join(temp_dir, f"{safe_name}_{request_id}_source{ext}")
 
             timeout = aiohttp.ClientTimeout(total=30)
             # LeiZ 接口要求所有请求携带 API Key（鉴权头为 x-api-key）。
@@ -2132,9 +2231,7 @@ class CurrentCortexPlugin(Star):
                 )
                 compressed_path = mp3_path
             else:
-                error_detail = (stderr or b"").decode(
-                    "utf-8", errors="replace"
-                ).strip()
+                error_detail = (stderr or b"").decode("utf-8", errors="replace").strip()
                 if len(error_detail) > 1000:
                     error_detail = f"{error_detail[-1000:]} (已截断)"
                 logger.warning(
@@ -2552,9 +2649,7 @@ class CurrentCortexPlugin(Star):
 
                 # 仍有剩余：记录游标供 /jm con 续看（仅内存、带 TTL）
                 if next_offset < len(images):
-                    self._set_jm_chapter_cursor(
-                        event, chapter_id, images, next_offset
-                    )
+                    self._set_jm_chapter_cursor(event, chapter_id, images, next_offset)
 
             elif action == "continue":
                 cursor = self._get_jm_chapter_cursor(event)
@@ -2578,9 +2673,7 @@ class CurrentCortexPlugin(Star):
                     yield item
 
                 if next_offset < len(images):
-                    self._set_jm_chapter_cursor(
-                        event, chapter_id, images, next_offset
-                    )
+                    self._set_jm_chapter_cursor(event, chapter_id, images, next_offset)
                 else:
                     # 已是最后一段：清除游标
                     self._clear_jm_chapter_cursor(event)
@@ -2831,18 +2924,20 @@ class CurrentCortexPlugin(Star):
         try:
             ext = self._jm_image_extension(url)
             request_id = uuid.uuid4().hex[:12]
-            temp_path = os.path.join(
-                temp_dir, f"jm_{idx + 1}_{request_id}{ext}"
-            )
+            temp_path = os.path.join(temp_dir, f"jm_{idx + 1}_{request_id}{ext}")
             timeout = aiohttp.ClientTimeout(total=30)
             headers = {"User-Agent": "AstrBot-JMComic-Plugin/1.0"}
             if self._leiz_api_key:
                 # 图片地址可能经 LeiZ 代理，统一附 x-api-key；对裸 CDN 无副作用。
                 headers["x-api-key"] = self._leiz_api_key
-            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+            async with aiohttp.ClientSession(
+                timeout=timeout, headers=headers
+            ) as session:
                 async with session.get(url) as resp:
                     if resp.status != 200:
-                        logger.warning(f"[JMComic] 下载图片失败: HTTP {resp.status} {url}")
+                        logger.warning(
+                            f"[JMComic] 下载图片失败: HTTP {resp.status} {url}"
+                        )
                         return None
                     with open(temp_path, "wb") as img_file:
                         async for chunk in resp.content.iter_chunked(8192):
@@ -2983,9 +3078,7 @@ class CurrentCortexPlugin(Star):
             )
 
         forward_msg = Comp.Nodes(nodes=nodes)
-        header = (
-            f"🖼️ 章节图片（第{offset + 1}~{end}张 / 共{total}张）"
-        )
+        header = f"🖼️ 章节图片（第{offset + 1}~{end}张 / 共{total}张）"
         results = [
             event.plain_result(header),
             event.chain_result([forward_msg]),
@@ -3381,18 +3474,16 @@ class CurrentCortexPlugin(Star):
         # (显示名, 客户端实例, 最轻量只读调用)
         # 注意：必须用每个客户端最省流量的只读请求，避免下载图片/音频
         targets = [
-            ("Pixiv", self._api_client,
-             lambda c: c.fetch_images(num=1, size="regular")),
-            ("一言", self._hitokoto_client,
-             lambda c: c.fetch_hitokoto()),
-            ("天气", self._weather_client,
-             lambda c: c.fetch_weather("北京")),
-            ("男娘", self._femboy_client,
-             lambda c: c.fetch_femboy_image()),
-            ("点歌", self._netease_client,
-             lambda c: c.search_songs("在你的身边")),
-            ("JMComic", self._jmcomic_client,
-             lambda c: c.search("姐姐")),
+            (
+                "Pixiv",
+                self._api_client,
+                lambda c: c.fetch_images(num=1, size="regular"),
+            ),
+            ("一言", self._hitokoto_client, lambda c: c.fetch_hitokoto()),
+            ("天气", self._weather_client, lambda c: c.fetch_weather("北京")),
+            ("男娘", self._femboy_client, lambda c: c.fetch_femboy_image()),
+            ("点歌", self._netease_client, lambda c: c.search_songs("在你的身边")),
+            ("JMComic", self._jmcomic_client, lambda c: c.search("姐姐")),
         ]
 
         async def _probe(name, client, call):
@@ -3416,7 +3507,12 @@ class CurrentCortexPlugin(Star):
                     return (name, "http_err", elapsed, f"HTTP {code}")
                 # 0 = 超时 / 网络错误
                 msg = str(e).strip().replace("\n", " ")
-                return (name, "net_err", elapsed, (msg[:40] + "…") if len(msg) > 40 else msg)
+                return (
+                    name,
+                    "net_err",
+                    elapsed,
+                    (msg[:40] + "…") if len(msg) > 40 else msg,
+                )
 
         overall_start = time.time()
         # 并行探测，避免串行最坏 6 × timeout
