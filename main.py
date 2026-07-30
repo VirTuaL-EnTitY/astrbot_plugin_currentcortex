@@ -1130,7 +1130,7 @@ _JM_CHAPTER_CURSOR_TTL = 30 * 60
 @register(
     "astrbot_plugin_currentcortex",
     "Rcst20",
-    "CurrentCortex 综合插件 - Pixiv 图片、每日一言、天气查询、网易云音乐、JMComic 漫画、DG-LAB 设备管理及小红书/B站/抖音媒体解析等",
+    "多功能 AstrBot 插件（CurrentCortex）—— Pixiv 随机图片 ·网易云点歌 ·JMComic 漫画 ·小红书/B站/抖音媒体解析 ·每日一言 ·天气 ·男娘 ·DG-LAB（郊狼） 设备管理 ·跨群聊记忆 ·按群聊开关。基于 LeiZ API。",
     "1.5.2",
 )
 class CurrentCortexPlugin(Star):
