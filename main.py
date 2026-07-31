@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 
 import aiohttp
 
-from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
+from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult, MessageChain
 from astrbot.api.star import Context, Star, register
 from astrbot.api import logger, AstrBotConfig
 
@@ -1131,7 +1131,7 @@ _JM_CHAPTER_CURSOR_TTL = 30 * 60
     "astrbot_plugin_currentcortex",
     "Rcst20",
     "多功能 AstrBot 插件（CurrentCortex）—— Pixiv 随机图片 ·网易云点歌 ·JMComic 漫画 ·小红书/B站/抖音媒体解析 ·每日一言 ·天气 ·男娘 ·DG-LAB（郊狼） 设备管理 ·跨群聊记忆 ·按群聊开关。基于 LeiZ API。",
-    "1.5.3",
+    "1.5.4",
 )
 class CurrentCortexPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -1352,6 +1352,42 @@ class CurrentCortexPlugin(Star):
                 self._group_switch_store = None
                 self._group_switch_enable = False
 
+        # 分段回复：把机器人回复拆成多条消息分次发送（模拟逐条回复）。
+        # 通过 on_decorating_result 钩子在框架自带分段/发送前介入。
+        self._reply_seg_enable = bool(config.get("reply_seg_enable", False))
+        self._reply_seg_only_llm = bool(config.get("reply_seg_only_llm", True))
+        self._reply_seg_mode = str(config.get("reply_seg_mode", "punct")).strip()
+        self._reply_seg_symbols = str(config.get("reply_seg_split_symbols", "。！？!?~～…\n"))
+        self._reply_seg_min_length = max(1, int(config.get("reply_seg_min_length", 15)))
+        self._reply_seg_max_length = max(
+            self._reply_seg_min_length + 1, int(config.get("reply_seg_max_length", 80))
+        )
+        # 解析延时范围 "min,max" -> (min, max)
+        self._reply_seg_delay_range = self._parse_delay_range(
+            str(config.get("reply_seg_delay_range", "0.8,2.5"))
+        )
+        if self._reply_seg_enable:
+            logger.info(
+                f"[ReplySeg] 已启用分段回复（mode={self._reply_seg_mode}, "
+                f"only_llm={self._reply_seg_only_llm}, delay={self._reply_seg_delay_range}）"
+            )
+
+    @staticmethod
+    def _parse_delay_range(raw: str) -> tuple:
+        """把 "min,max" 解析为 (min, max) 浮点元组，非法则回退 (0.8, 2.5)。"""
+        try:
+            parts = [p.strip() for p in raw.split(",")]
+            if len(parts) == 2:
+                lo, hi = float(parts[0]), float(parts[1])
+                if lo > hi:
+                    lo, hi = hi, lo
+                if lo < 0:
+                    lo = 0.0
+                return (lo, max(hi, lo))
+        except (ValueError, IndexError):
+            pass
+        return (0.8, 2.5)
+
     @filter.event_message_type(EventMessageType.ALL, priority=10)
     async def on_message_group_switch_guard(self, event: AstrMessageEvent):
         """高优先级守卫：被关闭的群聊中，静默拦截本插件除开关命令外的所有命令。
@@ -1562,6 +1598,157 @@ class CurrentCortexPlugin(Star):
             req.extra_user_content_parts.append(TextPart(text=block))
         except Exception as e:
             logger.error(f"[CrossGroupMemory] 注入上下文失败: {e}")
+
+    @filter.on_decorating_result()
+    async def on_reply_seg_decorating(self, event: AstrMessageEvent):
+        """分段回复：在发送前把回复文本拆成多条消息分次发送（模拟逐条回复）。
+
+        通过 on_decorating_result 钩子介入（LLM 文本已确定、框架自带分段/发送之前）。
+        处理流程：提取 Plain 文本 → 分段 → 清空框架结果 → 逐段 event.send + 延时 →
+        手动写回对话历史（因为绕过了框架发送，assistant 回合需自行记录）。
+        """
+        if not self._reply_seg_enable:
+            return
+        try:
+            result = event.get_result()
+            if not result or not result.chain:
+                return
+            # 仅对 LLM 结果分段（命令结果跳过）
+            if self._reply_seg_only_llm and not result.is_model_result():
+                return
+            raw_text = "".join(
+                comp.text for comp in result.chain if isinstance(comp, Comp.Plain)
+            ).strip()
+            if not raw_text:
+                return
+
+            segments = self._segment_text(raw_text)
+            if len(segments) <= 1:
+                return  # 无需分段，交回框架正常发送
+
+            full_text = "\n\n".join(segments)
+            result.chain.clear()  # 阻止框架再发一次原文
+
+            lo, hi = self._reply_seg_delay_range
+            for i, seg in enumerate(segments):
+                if i > 0:
+                    await asyncio.sleep(random.uniform(lo, hi))
+                await event.send(MessageChain().message(seg))
+
+            # 绕过框架发送后，需手动写回对话历史
+            await self._save_seg_history(event, full_text)
+            logger.info(f"[ReplySeg] 分段回复完成，共 {len(segments)} 段")
+        except Exception as e:
+            logger.error(f"[ReplySeg] 分段异常，已跳过（回复原文）: {e}")
+
+    def _segment_text(self, text: str) -> List[str]:
+        """按 reply_seg_mode 分派到对应分段算法，返回非空段落列表。"""
+        symbols = self._reply_seg_symbols or "。！？!?~～…\n"
+        if self._reply_seg_mode == "length":
+            return self._split_by_length(
+                text, self._reply_seg_min_length, self._reply_seg_max_length, symbols
+            )
+        return self._split_by_punct(text, symbols)
+
+    @staticmethod
+    def _split_by_punct(text: str, symbols: str) -> List[str]:
+        """按标点切分：在任一分句标点处断开，标点保留在段尾；丢弃空段。
+
+        注意：标点模式已自然分句，不做「末尾过短合并」——否则会把有效的短句
+        （如「好的。」）错误并回上一段。短尾合并仅在 length 模式中使用。
+        """
+        if not text:
+            return []
+        # 用正则在标点后断开；标点（含连续相同标点）随段尾保留
+        pattern = "([" + re.escape(symbols) + "]+)"
+        parts = re.split(pattern, text)
+        # re.split 带捕获组会交替返回 [非分隔, 分隔, 非分隔, 分隔, ...]
+        segments: List[str] = []
+        i = 0
+        while i < len(parts):
+            chunk = parts[i]
+            sep = parts[i + 1] if i + 1 < len(parts) else ""
+            piece = (chunk + sep).strip()
+            if piece:
+                segments.append(piece)
+            i += 2
+        return segments
+
+    @staticmethod
+    def _split_by_length(text: str, min_len: int, max_len: int, symbols: str) -> List[str]:
+        """按长度切分：段短于 max_len 直接收；超长则在 [min_len, max_len] 范围反向找标点切，
+        找不到则前向找；再找不到才硬切 max_len。末尾过短合并。"""
+        symset = set(symbols)
+        segments: List[str] = []
+        remaining = text.strip()
+        while remaining:
+            if len(remaining) <= max_len:
+                segments.append(remaining.strip())
+                break
+            cut = -1
+            # 1) 在 [min_len, max_len] 范围反向找标点
+            for idx in range(max_len, min_len - 1, -1):
+                if idx < len(remaining) and remaining[idx] in symset:
+                    cut = idx + 1  # 含标点
+                    break
+            # 2) 前向找（允许略超 max_len，最多到 min_len 的 2 倍内）
+            if cut == -1:
+                upper = min(len(remaining), max_len * 2)
+                for idx in range(max_len, upper):
+                    if remaining[idx] in symset:
+                        cut = idx + 1
+                        break
+            # 3) 硬切
+            if cut == -1:
+                cut = max_len
+            seg = remaining[:cut].strip()
+            if seg:
+                segments.append(seg)
+            remaining = remaining[cut:].strip()
+        # 合并过短末尾
+        if len(segments) >= 2 and len(segments[-1]) < 6:
+            tail = segments.pop()
+            segments[-1] += tail
+        return segments
+
+    async def _save_seg_history(self, event: AstrMessageEvent, content: str) -> None:
+        """将分段合并后的完整回复写入对话历史（绕过框架发送后的必要补偿）。
+
+        复刻自 astrbot_plugin_custome_segment_reply 的同名方法：取当前会话历史，
+        确保末尾是 user 回合后追加 assistant 回合，再 update_conversation。
+        """
+        try:
+            conv_mgr = self.context.conversation_manager
+            if not conv_mgr:
+                return
+            umo = event.unified_msg_origin
+            curr_cid = await conv_mgr.get_curr_conversation_id(umo)
+            if not curr_cid:
+                return
+            conversation = await conv_mgr.get_conversation(umo, curr_cid)
+            if not conversation:
+                return
+            import json as _json
+
+            try:
+                history = (
+                    _json.loads(conversation.history)
+                    if isinstance(conversation.history, str)
+                    else conversation.history
+                )
+            except (ValueError, TypeError):
+                history = []
+            user_content = event.message_str
+            if user_content and (not history or history[-1].get("role") != "user"):
+                history.append({"role": "user", "content": user_content})
+            history.append({"role": "assistant", "content": content})
+            await conv_mgr.update_conversation(
+                unified_msg_origin=umo,
+                conversation_id=curr_cid,
+                history=history,
+            )
+        except Exception as e:
+            logger.error(f"[ReplySeg] 保存对话历史失败: {e}")
 
     @filter.command("hitokoto", alias={"一言"})
     async def hitokoto_command(self, event: AstrMessageEvent):

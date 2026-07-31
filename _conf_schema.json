@@ -98,5 +98,40 @@
     "description": "是否仅允许群管理员操作 /开关 命令（建议保持开启，避免任意成员随意开关）",
     "type": "bool",
     "default": true
+  },
+  "reply_seg_enable": {
+    "description": "【分段回复总开关】开启后，机器人回复会按规则拆成多条消息分次发送（模拟逐条回复）。注意：AstrBot 框架自带全局分段回复(platform_settings.segmented_reply)，本功能与之独立，二者请勿同时开启以免重复分段",
+    "type": "bool",
+    "default": false
+  },
+  "reply_seg_only_llm": {
+    "description": "仅对 LLM（大模型）回复分段；关闭则插件的命令回复（如 /pixiv）也会被分段。建议保持开启",
+    "type": "bool",
+    "default": true
+  },
+  "reply_seg_mode": {
+    "description": "分段模式：punct=按标点分句（在句号/问号/感叹号等处切分，最自然）；length=按长度切分（配合下方最小/最大段长，超过最大段长时在范围内找标点切）",
+    "type": "string",
+    "default": "punct"
+  },
+  "reply_seg_split_symbols": {
+    "description": "punct 模式 / length 模式共用的分句标点，机器人会在这些符号处切分（每个符号都算一个切分点，标点会保留在段尾）",
+    "type": "string",
+    "default": "。！？!?~～…\n"
+  },
+  "reply_seg_min_length": {
+    "description": "length 模式：最小段长（字符数）。短于此长度不切分，避免产生过短的片段。建议 10~30",
+    "type": "int",
+    "default": 15
+  },
+  "reply_seg_max_length": {
+    "description": "length 模式：最大段长（字符数）。超过此长度时，会在 [最小段长, 最大段长] 范围内反向寻找标点切分；找不到标点才硬切。建议 50~150",
+    "type": "int",
+    "default": 80
+  },
+  "reply_seg_delay_range": {
+    "description": "分段之间发送的随机延时范围（秒），格式 min,max（如 0.8,2.5）。模拟逐条回复的节奏；首段不延时",
+    "type": "string",
+    "default": "0.8,2.5"
   }
 }
