@@ -39,6 +39,11 @@
     "type": "int",
     "default": 20
   },
+  "music_file_max_bytes": {
+    "description": "/音乐 文件 模式的单文件体积上限（字节）。原始音乐文件（如无损 flac）过大时，QQ/NapCat 端常以上传失败(retcode=1200)拒绝。超过此阈值会自动转码为 128kbps MP3 后再发送（需 ffmpeg）。默认 26214400（25MB）。设为 0 则不限制（不推荐，易发送失败）",
+    "type": "int",
+    "default": 26214400
+  },
   "leiz_api_key": {
     "description": "LeiZ API 统一密钥（请求头 x-api-key）。所有接口（含免费接口）均需携带。留空将禁用 Pixiv/一言/天气/男娘/点歌/JMComic 等全部 LeiZ 接口命令",
     "type": "string",

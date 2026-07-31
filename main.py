@@ -1131,7 +1131,7 @@ _JM_CHAPTER_CURSOR_TTL = 30 * 60
     "astrbot_plugin_currentcortex",
     "Rcst20",
     "多功能 AstrBot 插件（CurrentCortex）—— Pixiv 随机图片 ·网易云点歌 ·JMComic 漫画 ·小红书/B站/抖音媒体解析 ·每日一言 ·天气 ·男娘 ·DG-LAB（郊狼） 设备管理 ·跨群聊记忆 ·按群聊开关。基于 LeiZ API。",
-    "1.5.4",
+    "1.5.5",
 )
 class CurrentCortexPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -1154,6 +1154,9 @@ class CurrentCortexPlugin(Star):
         # 章节续看游标：{session_id: {"chapter_id", "images", "offset", "ts"}}
         # 仅内存保存，章节 URL 有时效；超过 TTL 自动清理。
         self._jm_chapter_cursor: Dict[str, dict] = {}
+        # /音乐 文件 模式：原始文件（如 flac）过大时 QQ/NapCat 端常 retcode=1200 失败，
+        # 超过该阈值则转码为 128kbps MP3 再发送（需 ffmpeg）。0 = 不限制。
+        self._music_file_max_bytes = max(0, int(config.get("music_file_max_bytes", 25 * 1024 * 1024)))
 
         # LeiZ API 统一鉴权：所有接口（含免费接口）均需携带 API Key。
         # 经实测，LeiZ 服务端实际通过 x-api-key 请求头校验（而非公告中提及的
@@ -2240,8 +2243,39 @@ class CurrentCortexPlugin(Star):
                 file_name = self._build_audio_filename(
                     song_data.get("name", file_query), file_path
                 )
-                yield event.chain_result([Comp.File(name=file_name, file=file_path)])
-                logger.info(f"[Music] 已添加原始音乐文件: {file_name} -> {file_path}")
+                # 体积校验：原始文件（如 flac）过大时，QQ/NapCat 端常以
+                # retcode=1200（下载文件失败）拒绝。超过阈值则转码为 128kbps MP3 再发。
+                final_path = file_path
+                final_name = file_name
+                src_size = os.path.getsize(file_path)
+                if (
+                    self._music_file_max_bytes > 0
+                    and src_size > self._music_file_max_bytes
+                ):
+                    src_mb = src_size / (1024 * 1024)
+                    lim_mb = self._music_file_max_bytes / (1024 * 1024)
+                    logger.info(
+                        f"[Music] 原始文件 {src_mb:.1f}MB 超过阈值 {lim_mb:.1f}MB，"
+                        f"尝试转码为 MP3 后发送: {file_path}"
+                    )
+                    compressed = await self._compress_for_file(file_path)
+                    if compressed:
+                        final_path = compressed
+                        final_name = self._build_audio_filename(
+                            song_data.get("name", file_query), compressed
+                        )
+                        new_mb = os.path.getsize(compressed) / (1024 * 1024)
+                        yield event.plain_result(
+                            f"📦 原始文件过大（{src_mb:.1f}MB），已转码为 MP3（{new_mb:.1f}MB）后发送"
+                        )
+                    else:
+                        # 转码失败：仍尝试发原文件，但提示可能失败
+                        yield event.plain_result(
+                            f"⚠️ 原始文件 {src_mb:.1f}MB 较大，转码失败（未安装 ffmpeg？），"
+                            f"仍尝试发送原文件，可能因体积过大失败；建议改用 /音乐 直接 获取语音条"
+                        )
+                yield event.chain_result([Comp.File(name=final_name, file=final_path)])
+                logger.info(f"[Music] 已添加音乐文件: {final_name} -> {final_path}")
                 return
 
             # direct模式：仅返回语音条，不附带额外信息
@@ -2667,6 +2701,69 @@ class CurrentCortexPlugin(Star):
             if compressed_path is None:
                 self._remove_file(mp3_path)
         return compressed_path
+
+    async def _compress_for_file(self, source_path: str) -> Optional[str]:
+        """将音频转码为 128kbps 立体声 MP3，用于 /音乐 文件 模式的体积超限降级。
+
+        与 _compress_for_voice（64kbps 单声道，语音条专用）不同，这里保留立体声与
+        较高码率，听感接近原曲，同时体积远小于无损 flac。需要 ffmpeg，失败返回 None。
+        """
+        if not shutil.which("ffmpeg"):
+            logger.warning("[Music] ffmpeg 未安装，无法为文件模式转码")
+            return None
+
+        temp_dir = os.path.dirname(source_path)
+        base = os.path.splitext(os.path.basename(source_path))[0]
+        request_id = uuid.uuid4().hex[:12]
+        mp3_path = os.path.join(temp_dir, f"{base}_{request_id}_file.mp3")
+        proc = None
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "ffmpeg",
+                "-y",
+                "-i",
+                source_path,
+                "-vn",  # 丢弃视频/封面流
+                "-codec:a",
+                "libmp3lame",
+                "-ar",
+                "44100",  # 标准采样率
+                "-ac",
+                "2",  # 立体声
+                "-b:a",
+                "128k",  # 码率：4分钟约 3.7MB
+                mp3_path,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+            if proc.returncode == 0 and os.path.isfile(mp3_path):
+                # 转码成功后删除原始大文件
+                self._remove_file(source_path)
+                size_mb = os.path.getsize(mp3_path) / (1024 * 1024)
+                logger.info(
+                    f"[Music] 已转码为文件 MP3 (128kbps stereo): {mp3_path} ({size_mb:.2f}MB)"
+                )
+                return mp3_path
+            error_detail = (stderr or b"").decode("utf-8", errors="replace").strip()
+            if len(error_detail) > 1000:
+                error_detail = f"{error_detail[-1000:]} (已截断)"
+            logger.warning(
+                f"[Music] 文件模式 ffmpeg 转码失败，退出码 {proc.returncode}: "
+                f"{error_detail or '无错误输出'}"
+            )
+        except asyncio.TimeoutError:
+            logger.warning("[Music] 文件模式 ffmpeg 转码超时")
+            if proc and proc.returncode is None:
+                proc.kill()
+                await proc.wait()
+        except Exception as e:
+            logger.warning(f"[Music] 文件模式转码异常: {e}")
+        finally:
+            # 失败时清理产物
+            if proc and proc.returncode != 0 and os.path.exists(mp3_path):
+                self._remove_file(mp3_path)
+        return None
 
     @staticmethod
     def _remove_file(file_path: str):

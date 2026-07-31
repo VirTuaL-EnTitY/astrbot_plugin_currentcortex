@@ -322,6 +322,8 @@ pip install websockets>=10.0   # 仅 DG-LAB 功能需要
 
 > ⚠️ 部分 VIP 歌曲可能无法获取播放链接；播放链接有时效性，请及时使用。语音条功能依赖系统 `ffmpeg`。
 
+> 📦 **文件模式与大文件**：`/音乐 文件` 返回的原始音频（尤其无损 flac）体积可能很大，QQ/NapCat 端常因超限上传失败（`retcode=1200`）。当文件超过 `music_file_max_bytes`（默认 25MB）时，插件会自动转码为 128kbps MP3 后再发送（需 `ffmpeg`），体积可缩小约 90%。如需发送原始无损文件，可在配置中调大该阈值（但不推荐，易发送失败）。
+
 ---
 
 ### 5. 每日一言 (`/hitokoto`，别名 `/一言`)
@@ -599,6 +601,12 @@ pip install websockets>=10.0   # 仅 DG-LAB 功能需要
 | `jm_image_max_bytes` | int | 2097152 | 章节单张图片体积阈值（字节），超此再逐档降质压缩 |
 | `jm_page_size` | int | 20 | 章节图片每条命令下发的张数，遇转发失败可调小 |
 
+### 网易云音乐
+
+| 配置项 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `music_file_max_bytes` | int | 26214400 | `/音乐 文件` 单文件体积上限（字节，默认 25MB）。超过则自动转码为 128kbps MP3 再发送（需 ffmpeg）；设为 0 不限制（不推荐，易发送失败） |
+
 ### DG-LAB
 
 > ⚠️ 使用 DG-LAB 功能前，必须先部署并运行 [DG-LAB Socket V2 中转服务器](https://github.com/DG-LAB-OPENSOURCE/DG-LAB-OPENSOURCE)。
@@ -830,5 +838,5 @@ astrbot_plugin_currentcortex/
 
 ---
 
-**版本**：v1.5.4  
+**版本**：v1.5.5  
 **仓库**：[GitHub](https://github.com/backrooms-yrc/astrbot_plugin_currentcortex)
