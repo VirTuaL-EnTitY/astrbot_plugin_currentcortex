@@ -115,9 +115,9 @@
     "default": "punct"
   },
   "reply_seg_split_symbols": {
-    "description": "punct 模式 / length 模式共用的分句标点，机器人会在这些符号处切分（每个符号都算一个切分点，标点会保留在段尾）",
+    "description": "分段切分符号，机器人会在这些符号处切分（标点/符号会保留在段尾）。默认包含中英文逗号，故普通文字之间也会在逗号处断开。可自行增删任意字符，如加空格、分号等",
     "type": "string",
-    "default": "。！？!?~～…\n"
+    "default": "。！？!?~～…\n,，"
   },
   "reply_seg_min_length": {
     "description": "length 模式：最小段长（字符数）。短于此长度不切分，避免产生过短的片段。建议 10~30",

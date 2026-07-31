@@ -511,7 +511,7 @@ pip install websockets>=10.0   # 仅 DG-LAB 功能需要
 | `reply_seg_enable` | bool | false | **【总开关】** 开启分段回复 |
 | `reply_seg_only_llm` | bool | true | 仅对大模型(LLM)回复分段；关闭则插件命令回复（如 `/pixiv`）也会被分段。建议保持开启 |
 | `reply_seg_mode` | string | punct | 分段模式：`punct`=按标点分句；`length`=按长度切分 |
-| `reply_seg_split_symbols` | string | `。！？!?~～…`+换行 | 分句标点（在这些符号处切分，标点保留在段尾）。两种模式共用 |
+| `reply_seg_split_symbols` | string | `。！？!?~～…`+换行+`,，` | 切分符号（在这些符号处切分，符号保留在段尾）。默认含中英文逗号，故普通文字间也会在逗号处断开；可自行增删任意字符 |
 | `reply_seg_min_length` | int | 15 | length 模式：最小段长，短于此不切（建议 10~30） |
 | `reply_seg_max_length` | int | 80 | length 模式：最大段长，超过时在 `[最小,最大]` 范围找标点切，找不到才硬切（建议 50~150） |
 | `reply_seg_delay_range` | string | `0.8,2.5` | 段间随机延时范围（秒），格式 `min,max` |
