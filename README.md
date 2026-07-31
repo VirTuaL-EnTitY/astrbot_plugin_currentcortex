@@ -82,7 +82,17 @@ git clone https://github.com/backrooms-yrc/astrbot_plugin_currentcortex.git
 
 > 🔐 **LeiZ API 鉴权要求**：自最新版本起，**所有接口（含免费接口）均需携带 API Key**，请求头格式为 `x-api-key: <API-Key>`。
 
-打开 AstrBot 管理面板 → 插件管理 → 本插件 → 配置，填写 **`leiz_api_key`** 后保存并重启插件。
+#### 第一步：获取 API Key
+
+前往 **LeiZ API 官网** 👉 [https://api.bileizhen.top](https://api.bileizhen.top)
+
+在官网注册/登录后，进入「控制台 / API Keys」页面创建并复制你的 API Key（即 `x-api-key` 的值）。该 Key 为所有 LeiZ 接口（Pixiv / 一言 / 天气 / 男娘 / 网易云 / JMComic）统一使用，只需一个。
+
+> 💡 具体申请位置以官网页面为准（如「控制台 → API Keys / 令牌管理」）。若官网流程有变动，以官网说明为准。
+
+#### 第二步：填入插件配置
+
+打开 AstrBot 管理面板 → 插件管理 → 本插件 → 配置，把上一步获取的 Key 填入 **`leiz_api_key`** 字段，保存后重启插件。
 
 未配置时，Pixiv / 一言 / 天气 / 男娘 / 点歌 / JMComic 等全部 LeiZ 接口命令将不可用，调用时会给出配置引导提示。
 
@@ -591,7 +601,7 @@ pip install websockets>=10.0   # 仅 DG-LAB 功能需要
 
 | 配置项 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `leiz_api_key` | string | （空） | **LeiZ API 统一密钥**（请求头 `x-api-key`），**必填**，所有 LeiZ 接口均需 |
+| `leiz_api_key` | string | （空） | **LeiZ API 统一密钥**（请求头 `x-api-key`），**必填**。在 [LeiZ API 官网](https://api.bileizhen.top) 注册后获取，所有 LeiZ 接口均需 |
 | `request_timeout` | int | 15 | API 请求超时时间（秒），影响所有功能 |
 
 ### JMComic
@@ -690,7 +700,7 @@ cp -a qtine/ /path/to/Qtine/plugins/currentcortex/
 <details>
 <summary><b>调用命令提示「功能未启用 / 未配置 API Key」？</b></summary>
 
-需在配置面板填写 `leiz_api_key`（LeiZ API 统一密钥），保存后重启插件。可用 `/apitest` 验证各接口连通性。Pixiv / 一言 / 天气 / 男娘 / 点歌 / JMComic 均依赖此 Key。
+需先在 [LeiZ API 官网](https://api.bileizhen.top) 获取 API Key（见 [配置 API Key](#2-配置-api-key必填)），再填入配置面板的 `leiz_api_key` 字段，保存后重启插件。可用 `/apitest` 验证各接口连通性。Pixiv / 一言 / 天气 / 男娘 / 点歌 / JMComic 均依赖此 Key。
 
 </details>
 
