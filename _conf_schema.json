@@ -75,17 +75,17 @@
     "default": 9178
   },
   "cross_group_enable": {
-    "description": "启用跨群聊记忆（同一平台实例下所有群聊共享一份持久化记忆，重启后保留）",
+    "description": "【跨群聊记忆开关】开启后，同一平台实例下所有群聊共享一份持久化记忆，并自动注入到 LLM 请求（默认关闭；注意开启会把其他群的聊天内容提供给 LLM，请确认符合隐私预期）",
     "type": "bool",
     "default": false
   },
   "cross_group_max_cnt": {
-    "description": "跨群聊记忆每个平台实例保留的最大记录条数",
+    "description": "跨群聊记忆：每个平台实例保留的最大记录条数（建议 200~1000，越大越占内存）",
     "type": "int",
     "default": 500
   },
   "cross_group_inject_cnt": {
-    "description": "每次回复时注入到 LLM 的最近共享记忆条数",
+    "description": "跨群聊记忆：每次回复注入到 LLM 的最近共享记忆条数（建议 10~50，越大越占 token）",
     "type": "int",
     "default": 30
   },
