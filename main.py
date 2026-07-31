@@ -1357,7 +1357,15 @@ class CurrentCortexPlugin(Star):
         self._reply_seg_enable = bool(config.get("reply_seg_enable", False))
         self._reply_seg_only_llm = bool(config.get("reply_seg_only_llm", True))
         self._reply_seg_mode = str(config.get("reply_seg_mode", "punct")).strip()
-        self._reply_seg_symbols = str(config.get("reply_seg_split_symbols", "。！？!?~～…\n"))
+        self._reply_seg_symbols = str(
+            config.get("reply_seg_split_symbols", "。！？!?~～…\n,，")
+        )
+        # 切分词（可多字符，空格分隔），如「喵 qwq owo」。在词的后面切分，词保留在段尾。
+        self._reply_seg_words = [
+            w for w in str(
+                config.get("reply_seg_split_words", "喵 qwq owo awa ovo w （")
+            ).split() if w
+        ]
         self._reply_seg_min_length = max(1, int(config.get("reply_seg_min_length", 15)))
         self._reply_seg_max_length = max(
             self._reply_seg_min_length + 1, int(config.get("reply_seg_max_length", 80))
@@ -1643,25 +1651,48 @@ class CurrentCortexPlugin(Star):
 
     def _segment_text(self, text: str) -> List[str]:
         """按 reply_seg_mode 分派到对应分段算法，返回非空段落列表。"""
-        symbols = self._reply_seg_symbols or "。！？!?~～…\n"
+        symbols = self._reply_seg_symbols or "。！？!?~～…\n,，"
+        words = self._reply_seg_words
         if self._reply_seg_mode == "length":
             return self._split_by_length(
-                text, self._reply_seg_min_length, self._reply_seg_max_length, symbols
+                text, self._reply_seg_min_length, self._reply_seg_max_length,
+                symbols, words,
             )
-        return self._split_by_punct(text, symbols)
+        return self._split_by_punct(text, symbols, words)
 
     @staticmethod
-    def _split_by_punct(text: str, symbols: str) -> List[str]:
-        """按标点切分：在任一分句标点处断开，标点保留在段尾；丢弃空段。
+    def _build_sep_pattern(symbols: str, words: List[str]) -> Optional[re.Pattern]:
+        """构建分隔符正则：单字符符号（成组 [..]+） + 多字符词（按长度降序的交替）。
 
-        注意：标点模式已自然分句，不做「末尾过短合并」——否则会把有效的短句
-        （如「好的。」）错误并回上一段。短尾合并仅在 length 模式中使用。
+        词排在前面以优先匹配更长的词（如 owo 不被 o 截断）；返回一个捕获组，
+        供 re.split 在分隔符处断开并保留分隔符。
+        """
+        # 多字符词按长度降序，避免短词先匹配；单字符词并入字符类
+        multi = sorted((w for w in words if len(w) > 1), key=len, reverse=True)
+        single_words = [w for w in words if len(w) == 1]
+        # 单字符：合并符号与单字符词到一个字符类
+        single_chars = symbols + "".join(single_words)
+        alts: List[str] = []
+        if multi:
+            alts.append("|".join(re.escape(w) for w in multi))
+        if single_chars:
+            alts.append("[" + re.escape(single_chars) + "]+")
+        if not alts:
+            return None
+        return re.compile("(" + "|".join(alts) + ")")
+
+    def _split_by_punct(self, text: str, symbols: str, words: List[str]) -> List[str]:
+        """按标点/词切分：在任一切分点处断开，分隔符保留在段尾；丢弃空段。
+
+        支持单字符符号（。！？, 等）和多字符词（喵 qwq owo 等）。标点模式已自然
+        分句，不做「末尾过短合并」——否则会把有效短句错误并回上一段。
         """
         if not text:
             return []
-        # 用正则在标点后断开；标点（含连续相同标点）随段尾保留
-        pattern = "([" + re.escape(symbols) + "]+)"
-        parts = re.split(pattern, text)
+        pattern = self._build_sep_pattern(symbols, words)
+        if pattern is None:
+            return [text.strip()] if text.strip() else []
+        parts = pattern.split(text)
         # re.split 带捕获组会交替返回 [非分隔, 分隔, 非分隔, 分隔, ...]
         segments: List[str] = []
         i = 0
@@ -1675,10 +1706,40 @@ class CurrentCortexPlugin(Star):
         return segments
 
     @staticmethod
-    def _split_by_length(text: str, min_len: int, max_len: int, symbols: str) -> List[str]:
-        """按长度切分：段短于 max_len 直接收；超长则在 [min_len, max_len] 范围反向找标点切，
-        找不到则前向找；再找不到才硬切 max_len。末尾过短合并。"""
+    def _find_cut_after(remaining: str, start: int, end: int, symbols: str,
+                        words: List[str]) -> int:
+        """在 remaining 的 [start, end) 范围内，找到最靠后的「切分点之后」位置。
+
+        切分点 = 单字符符号，或多字符词的结尾。返回切分后剩余的起始索引
+        （即分隔符之后的位置）；找不到返回 -1。
+        """
         symset = set(symbols)
+        best = -1
+        # 单字符符号：在范围内扫描
+        hi = min(end, len(remaining))
+        for idx in range(start, hi):
+            if remaining[idx] in symset:
+                best = idx + 1  # 含该符号
+        # 多字符词：在范围内找每个词的出现，取词结尾之后的位置
+        for w in words:
+            if len(w) <= 1:
+                continue
+            wl = len(w)
+            search_from = start
+            while True:
+                pos = remaining.find(w, search_from, hi)
+                if pos == -1:
+                    break
+                after = pos + wl
+                if after <= hi and after > best:
+                    best = after
+                search_from = pos + 1
+        return best
+
+    def _split_by_length(self, text: str, min_len: int, max_len: int,
+                         symbols: str, words: List[str]) -> List[str]:
+        """按长度切分：段短于 max_len 直接收；超长则在 [min_len, max_len] 范围反向找
+        切分点（标点或词），找不到则前向找；再找不到才硬切 max_len。末尾过短合并。"""
         segments: List[str] = []
         remaining = text.strip()
         while remaining:
@@ -1686,18 +1747,14 @@ class CurrentCortexPlugin(Star):
                 segments.append(remaining.strip())
                 break
             cut = -1
-            # 1) 在 [min_len, max_len] 范围反向找标点
-            for idx in range(max_len, min_len - 1, -1):
-                if idx < len(remaining) and remaining[idx] in symset:
-                    cut = idx + 1  # 含标点
-                    break
-            # 2) 前向找（允许略超 max_len，最多到 min_len 的 2 倍内）
+            # 1) 在 [min_len, max_len] 范围反向找切分点（_find_cut_after 已取最靠后）
+            cut = self._find_cut_after(remaining, min_len, max_len, symbols, words)
+            # 2) 前向找（允许略超 max_len，最多到 max_len 的 2 倍内）
             if cut == -1:
-                upper = min(len(remaining), max_len * 2)
-                for idx in range(max_len, upper):
-                    if remaining[idx] in symset:
-                        cut = idx + 1
-                        break
+                cut = self._find_cut_after(
+                    remaining, max_len, min(len(remaining), max_len * 2),
+                    symbols, words,
+                )
             # 3) 硬切
             if cut == -1:
                 cut = max_len

@@ -115,9 +115,14 @@
     "default": "punct"
   },
   "reply_seg_split_symbols": {
-    "description": "分段切分符号，机器人会在这些符号处切分（标点/符号会保留在段尾）。默认包含中英文逗号，故普通文字之间也会在逗号处断开。可自行增删任意字符，如加空格、分号等",
+    "description": "分段切分符号（单字符），机器人会在这些符号处切分（符号保留在段尾）。默认包含中英文逗号，故普通文字之间也会在逗号处断开。可自行增删任意字符，如加空格、分号等",
     "type": "string",
     "default": "。！？!?~～…\n,，"
+  },
+  "reply_seg_split_words": {
+    "description": "分段切分词（可多字符，空格分隔），在这些词的「后面」切分，词保留在段尾。用于颜文字/语气词，如「喵 qwq owo awa ovo w （」。注意：单字符词（如 w）会匹配所有出现位置，可能误切英文单词，按需增删",
+    "type": "string",
+    "default": "喵 qwq owo awa ovo w （"
   },
   "reply_seg_min_length": {
     "description": "length 模式：最小段长（字符数）。短于此长度不切分，避免产生过短的片段。建议 10~30",
