@@ -1131,7 +1131,7 @@ _JM_CHAPTER_CURSOR_TTL = 30 * 60
     "astrbot_plugin_currentcortex",
     "Rcst20",
     "多功能 AstrBot 插件（CurrentCortex）—— Pixiv 随机图片 ·网易云点歌 ·JMComic 漫画 ·小红书/B站/抖音媒体解析 ·每日一言 ·天气 ·男娘 ·DG-LAB（郊狼） 设备管理 ·跨群聊记忆 ·按群聊开关。基于 LeiZ API。",
-    "1.5.5",
+    "1.5.6",
 )
 class CurrentCortexPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -1157,6 +1157,11 @@ class CurrentCortexPlugin(Star):
         # /音乐 文件 模式：原始文件（如 flac）过大时 QQ/NapCat 端常 retcode=1200 失败，
         # 超过该阈值则转码为 128kbps MP3 再发送（需 ffmpeg）。0 = 不限制。
         self._music_file_max_bytes = max(0, int(config.get("music_file_max_bytes", 25 * 1024 * 1024)))
+        # 点歌并发防护：同一会话进行中去重 + 完成后冷却，防止用户连点触发大量并发
+        # 下载/转码拖垮服务器。单线程 asyncio 下 dict/set 操作原子，无需加锁。
+        self._music_in_progress: set[str] = set()
+        self._music_last_done: dict[str, float] = {}
+        self._music_cooldown = max(0, int(config.get("music_cooldown", 3)))
 
         # LeiZ API 统一鉴权：所有接口（含免费接口）均需携带 API Key。
         # 经实测，LeiZ 服务端实际通过 x-api-key 请求头校验（而非公告中提及的
@@ -2173,6 +2178,11 @@ class CurrentCortexPlugin(Star):
             yield event.plain_result(_format_api_key_not_configured("网易云音乐点歌"))
             return
 
+        # 并发防护：进行中去重 + 冷却，防止连点触发大量并发下载/转码
+        hint = self._acquire_music_slot(event)
+        if hint:
+            yield event.plain_result(hint)
+            return
         try:
             query = self._parse_music_params(message_str)
             if not query:
@@ -2338,6 +2348,8 @@ class CurrentCortexPlugin(Star):
             yield event.plain_result(
                 f"❌ 发生未知错误\n📝 错误信息：{str(e)}\n💡 请稍后重试"
             )
+        finally:
+            self._release_music_slot(event)
 
     @filter.command("点歌")
     async def play_song_command(self, event: AstrMessageEvent):
@@ -2366,6 +2378,11 @@ class CurrentCortexPlugin(Star):
             )
             return
 
+        # 并发防护：进行中去重 + 冷却，防止连点触发大量并发下载/转码
+        hint = self._acquire_music_slot(event)
+        if hint:
+            yield event.plain_result(hint)
+            return
         try:
             logger.info(f"[PlaySong] Direct play '{query}' for user {user_name}")
             songs = await self._netease_client.search_songs(query)
@@ -2402,6 +2419,41 @@ class CurrentCortexPlugin(Star):
             yield event.plain_result(
                 f"❌ 发生未知错误\n📝 错误信息：{str(e)}\n💡 请稍后重试"
             )
+        finally:
+            self._release_music_slot(event)
+
+    def _acquire_music_slot(self, event: AstrMessageEvent) -> Optional[str]:
+        """点歌并发防护：尝试为当前会话占用一个处理槽。
+
+        Returns:
+            None 表示放行（已占用槽位，调用方处理完后必须 _release_music_slot）；
+            非 None 字符串表示被拦截，直接作为提示返回给用户。
+        """
+        umo = event.unified_msg_origin
+        if not umo:
+            return None  # 无法识别会话，不拦截
+        # 1) 进行中去重：同一会话已有音乐命令在处理
+        if umo in self._music_in_progress:
+            return "⏳ 上一首歌还在处理中，请稍候再试～"
+        # 2) 冷却：上一次完成后短时间内禁止再点
+        if self._music_cooldown > 0:
+            last = self._music_last_done.get(umo)
+            if last is not None:
+                elapsed = time.time() - last
+                if elapsed < self._music_cooldown:
+                    wait = self._music_cooldown - elapsed
+                    return f"⏳ 点得太快啦，请等待约 {wait:.0f} 秒后再试～"
+        # 放行：占用槽位
+        self._music_in_progress.add(umo)
+        return None
+
+    def _release_music_slot(self, event: AstrMessageEvent) -> None:
+        """释放当前会话的处理槽，并记录完成时间戳（用于冷却计算）。"""
+        umo = event.unified_msg_origin
+        if not umo:
+            return
+        self._music_in_progress.discard(umo)
+        self._music_last_done[umo] = time.time()
 
     def _parse_play_song_params(self, message: str) -> Optional[str]:
         """解析 /点歌 命令参数，剥离命令名后返回剩余的歌曲名。"""

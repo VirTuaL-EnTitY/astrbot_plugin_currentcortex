@@ -44,6 +44,11 @@
     "type": "int",
     "default": 26214400
   },
+  "music_cooldown": {
+    "description": "同一会话连续点歌的最小间隔秒数，防止用户连点导致大量并发下载/转码拖垮服务器。在处理中的请求会被直接提示「请稍候」。默认 3 秒；设为 0 则不限制（不推荐）",
+    "type": "int",
+    "default": 3
+  },
   "leiz_api_key": {
     "description": "LeiZ API 统一密钥（请求头 x-api-key）。所有接口（含免费接口）均需携带。留空将禁用 Pixiv/一言/天气/男娘/点歌/JMComic 等全部 LeiZ 接口命令",
     "type": "string",

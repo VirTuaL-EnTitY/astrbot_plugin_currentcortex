@@ -334,6 +334,8 @@ pip install websockets>=10.0   # 仅 DG-LAB 功能需要
 
 > 📦 **文件模式与大文件**：`/音乐 文件` 返回的原始音频（尤其无损 flac）体积可能很大，QQ/NapCat 端常因超限上传失败（`retcode=1200`）。当文件超过 `music_file_max_bytes`（默认 25MB）时，插件会自动转码为 128kbps MP3 后再发送（需 `ffmpeg`），体积可缩小约 90%。如需发送原始无损文件，可在配置中调大该阈值（但不推荐，易发送失败）。
 
+> 🚫 **防连点过载**：为避免用户短时间连点触发大量并发下载/转码拖垮服务器，点歌命令内置「进行中去重 + 冷却」（`music_cooldown`，默认 3 秒）。同一会话上一首还在处理时再次点歌会提示「请稍候」，刚点完立刻再点会提示「点得太快啦」。不同群/私聊互不影响。
+
 ---
 
 ### 5. 每日一言 (`/hitokoto`，别名 `/一言`)
@@ -616,6 +618,7 @@ pip install websockets>=10.0   # 仅 DG-LAB 功能需要
 | 配置项 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `music_file_max_bytes` | int | 26214400 | `/音乐 文件` 单文件体积上限（字节，默认 25MB）。超过则自动转码为 128kbps MP3 再发送（需 ffmpeg）；设为 0 不限制（不推荐，易发送失败） |
+| `music_cooldown` | int | 3 | 同一会话连续点歌的最小间隔秒数，防止用户连点触发大量并发下载/转码拖垮服务器。处理中的请求会被提示「请稍候」；设为 0 不限制（不推荐） |
 
 ### DG-LAB
 
@@ -848,5 +851,5 @@ astrbot_plugin_currentcortex/
 
 ---
 
-**版本**：v1.5.5  
+**版本**：v1.5.6  
 **仓库**：[GitHub](https://github.com/backrooms-yrc/astrbot_plugin_currentcortex)
