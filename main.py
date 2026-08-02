@@ -41,6 +41,8 @@ WEATHER_API_URL = "https://api.bileizhen.top/api/weather"
 FEMBOY_API_URL = "https://api.bileizhen.top/api/femboy"
 NETEASE_API_URL = "https://api.bileizhen.top/api/netease"
 NETEASE_SEARCH_URL = "https://api.bileizhen.top/api/netease/search"
+KUGOU_API_URL = "https://api.bileizhen.top/api/kugou"
+KUGOU_SEARCH_URL = "https://api.bileizhen.top/api/kugou/search"
 JMCOMIC_API_BASE = "https://api.bileizhen.top/api/jmcomic"
 PIXIV_ARTWORK_URL = "https://www.pixiv.net/artworks/{}"
 
@@ -910,6 +912,113 @@ class NeteaseAPIClient:
         return songs
 
 
+class KugouAPIClient:
+    """酷狗音乐 API 客户端。返回字段结构与 NeteaseAPIClient 对齐
+   （url/level/size/type/bitrate/name/artists/album/pic），便于统一处理。"""
+
+    def __init__(self, api_key: str = "", timeout: int = 15):
+        self._timeout = aiohttp.ClientTimeout(total=timeout)
+        self._headers = {
+            "User-Agent": "AstrBot-Music-Plugin/1.0",
+            "Accept": "application/json",
+            "x-api-key": api_key,
+        }
+        # 复用与网易云相同的重试/超时策略
+        self.NETEASE_MAX_ATTEMPTS = 3
+        self.NETEASE_RETRY_BACKOFF_BASE = 0.5
+        self.NETEASE_REQUEST_TIMEOUT = 6.0
+
+    async def _get_with_retry(
+        self, url: str, params: Dict[str, Any], tag: str
+    ) -> Dict[str, Any]:
+        """带重试的 GET 请求（同 NeteaseAPIClient._get_with_retry）。"""
+        per_request_timeout = aiohttp.ClientTimeout(total=self.NETEASE_REQUEST_TIMEOUT)
+        last_exc: Optional[Exception] = None
+        for attempt in range(1, self.NETEASE_MAX_ATTEMPTS + 1):
+            async with aiohttp.ClientSession(
+                timeout=per_request_timeout, headers=self._headers
+            ) as session:
+                try:
+                    async with session.get(url, params=params) as resp:
+                        if resp.status != 200:
+                            error_text = await resp.text()
+                            logger.error(
+                                f"[Kugou] {tag} API returned status {resp.status}: {error_text[:500]}"
+                            )
+                            raise NeteaseAPIError(
+                                f"API 请求失败 (HTTP {resp.status})",
+                                status_code=resp.status,
+                            )
+                        data = await resp.json()
+                        return data
+                except asyncio.TimeoutError:
+                    last_exc = NeteaseAPIError("API 请求超时，请稍后再试", status_code=0)
+                    logger.warning(
+                        f"[Kugou] {tag} timeout (attempt {attempt}/{self.NETEASE_MAX_ATTEMPTS})"
+                    )
+                except aiohttp.ClientError as e:
+                    last_exc = NeteaseAPIError(f"网络请求失败: {str(e)}", status_code=0)
+                    logger.warning(
+                        f"[Kugou] {tag} network error (attempt {attempt}/{self.NETEASE_MAX_ATTEMPTS}): {e}"
+                    )
+
+            if attempt < self.NETEASE_MAX_ATTEMPTS:
+                backoff = self.NETEASE_RETRY_BACKOFF_BASE * (2 ** (attempt - 1))
+                await asyncio.sleep(backoff)
+
+        assert last_exc is not None
+        raise last_exc
+
+    async def get_song(
+        self, song_id: str = "", hash_val: str = ""
+    ) -> Dict[str, Any]:
+        """通过 hash 或内部 ID 获取歌曲信息和播放链接。
+
+        酷狗优先用 hash（更稳定）；无 hash 时用 id。两者都无则报错。
+        """
+        params: Dict[str, Any] = {}
+        if hash_val:
+            params["hash"] = hash_val
+        elif song_id:
+            params["id"] = song_id
+        else:
+            raise NeteaseAPIError("歌曲 hash 或 ID 不能为空")
+
+        logger.debug(f"[Kugou] Fetching song: id={song_id}, hash={hash_val}")
+        data = await self._get_with_retry(KUGOU_API_URL, params, "get_song")
+
+        if not isinstance(data, dict):
+            raise NeteaseAPIError("API 返回数据格式异常")
+        if not data.get("success"):
+            msg = data.get("message", "未知错误")
+            raise NeteaseAPIError(f"获取歌曲失败: {msg}")
+
+        song_data = data.get("data", {})
+        if not song_data or not isinstance(song_data, dict):
+            raise NeteaseAPIError("API 返回歌曲数据为空")
+        return song_data
+
+    async def search_songs(self, query: str) -> List[Dict[str, Any]]:
+        """通过关键词搜索歌曲。"""
+        if not query or not query.strip():
+            raise NeteaseAPIError("搜索关键词不能为空")
+
+        params = {"q": query.strip()}
+        logger.debug(f"[Kugou] Searching songs: {query}")
+        data = await self._get_with_retry(KUGOU_SEARCH_URL, params, "search_songs")
+
+        if not isinstance(data, dict):
+            raise NeteaseAPIError("API 返回数据格式异常")
+        if not data.get("success"):
+            msg = data.get("message", "未知错误")
+            raise NeteaseAPIError(f"搜索失败: {msg}")
+
+        songs = data.get("data", [])
+        if not isinstance(songs, list):
+            raise NeteaseAPIError("API 返回搜索结果格式异常")
+        return songs
+
+
 class JMComicAPIClient:
     """JMComic 漫画 API 客户端"""
 
@@ -1131,7 +1240,7 @@ _JM_CHAPTER_CURSOR_TTL = 30 * 60
     "astrbot_plugin_currentcortex",
     "Rcst20",
     "多功能 AstrBot 插件（CurrentCortex）—— Pixiv 随机图片 ·网易云点歌 ·JMComic 漫画 ·小红书/B站/抖音媒体解析 ·每日一言 ·天气 ·男娘 ·DG-LAB（郊狼） 设备管理 ·跨群聊记忆 ·按群聊开关。基于 LeiZ API。",
-    "1.5.6",
+    "1.5.7",
 )
 class CurrentCortexPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -1162,6 +1271,11 @@ class CurrentCortexPlugin(Star):
         self._music_in_progress: set[str] = set()
         self._music_last_done: dict[str, float] = {}
         self._music_cooldown = max(0, int(config.get("music_cooldown", 3)))
+        # 音源偏好：按会话(umo)记忆 auto/netease/kugou；纯内存，重启重置为默认
+        self._music_default_source = str(config.get("music_default_source", "auto")).strip().lower()
+        if self._music_default_source not in ("auto", "netease", "kugou"):
+            self._music_default_source = "auto"
+        self._music_source_pref: dict[str, str] = {}
 
         # LeiZ API 统一鉴权：所有接口（含免费接口）均需携带 API Key。
         # 经实测，LeiZ 服务端实际通过 x-api-key 请求头校验（而非公告中提及的
@@ -1198,6 +1312,7 @@ class CurrentCortexPlugin(Star):
             self._weather_client = None
             self._femboy_client = None
             self._netease_client = None
+            self._kugou_client = None
             self._jmcomic_client = None
         else:
             self._api_client = PixivAPIClient(
@@ -1213,6 +1328,9 @@ class CurrentCortexPlugin(Star):
                 api_key=leiz_api_key, timeout=self._request_timeout
             )
             self._netease_client = NeteaseAPIClient(
+                api_key=leiz_api_key, timeout=self._request_timeout
+            )
+            self._kugou_client = KugouAPIClient(
                 api_key=leiz_api_key, timeout=self._request_timeout
             )
             self._jmcomic_client = JMComicAPIClient(
@@ -2162,7 +2280,7 @@ class CurrentCortexPlugin(Star):
 
     @filter.command("music", alias={"音乐"})
     async def music_command(self, event: AstrMessageEvent):
-        """搜索网易云音乐并获取歌曲详情或音频。"""
+        """搜索音乐（网易云/酷狗，支持 auto 自动路由）并获取歌曲详情或音频。"""
         user_name = event.get_sender_name()
         message_str = event.message_str.strip()
 
@@ -2173,9 +2291,9 @@ class CurrentCortexPlugin(Star):
             yield event.plain_result(MUSIC_HELP_TEXT)
             return
 
-        if not self._netease_client:
+        if not self._netease_client and not self._kugou_client:
             logger.warning(f"[Music] API client not initialized for user {user_name}")
-            yield event.plain_result(_format_api_key_not_configured("网易云音乐点歌"))
+            yield event.plain_result(_format_api_key_not_configured("音乐点歌"))
             return
 
         # 并发防护：进行中去重 + 冷却，防止连点触发大量并发下载/转码
@@ -2191,27 +2309,37 @@ class CurrentCortexPlugin(Star):
                 )
                 return
 
-            # 通过ID获取歌曲
+            music_source = self._get_music_source(event)
+
+            # 通过ID获取歌曲（ID 模式跨源不通用，固定走网易云）
             id_match = re.match(r"^(id|编号)\s*[:：]\s*(\d+)$", query, re.IGNORECASE)
             if id_match:
                 song_id = id_match.group(2)
                 logger.info(
                     f"[Music] Fetching song by ID {song_id} for user {user_name}"
                 )
+                if not self._netease_client:
+                    yield event.plain_result("❌ ID 模式需要网易云音源，但未配置 API Key")
+                    return
                 song_data = await self._netease_client.get_song(song_id)
                 response_items = await self._format_song_response(song_data, event)
                 for item in response_items:
                     yield item
                 return
 
-            # 搜索模式：仅列出搜索结果
+            # 搜索模式：仅列出搜索结果（用当前音源；auto 走网易云）
             search_match = re.match(r"^(search|搜索)\s+(.+)$", query, re.IGNORECASE)
             if search_match:
                 search_query = search_match.group(2).strip()
                 logger.info(
-                    f"[Music] Searching songs '{search_query}' for user {user_name}"
+                    f"[Music] Searching songs '{search_query}' for user {user_name} (source={music_source})"
                 )
-                songs = await self._netease_client.search_songs(search_query)
+                list_source = "netease" if music_source == "auto" else music_source
+                list_client = self._resolve_single_source(list_source)
+                if list_client is None:
+                    yield event.plain_result("❌ 当前音源不可用（未配置 API Key）")
+                    return
+                songs = await list_client.search_songs(search_query)
                 if not songs:
                     yield event.plain_result(
                         f"😕 未找到与「{search_query}」相关的歌曲\n💡 请尝试其他关键词"
@@ -2226,19 +2354,14 @@ class CurrentCortexPlugin(Star):
             if file_match:
                 file_query = file_match.group(2).strip()
                 logger.info(
-                    f"[Music] Download original file '{file_query}' for user {user_name}"
+                    f"[Music] Download original file '{file_query}' for user {user_name} (source={music_source})"
                 )
-                songs = await self._netease_client.search_songs(file_query)
-                if not songs:
-                    yield event.plain_result(f"😕 未找到与「{file_query}」相关的歌曲")
+                try:
+                    song_data, used_source = await self._search_and_get(music_source, file_query)
+                except NeteaseAPIError as e:
+                    yield event.plain_result(f"😕 未找到与「{file_query}」相关的歌曲\n💡 {e}")
                     return
 
-                song_id = str(songs[0].get("id", ""))
-                if not song_id:
-                    yield event.plain_result("⚠️ 搜索结果异常，未能获取歌曲ID")
-                    return
-
-                song_data = await self._netease_client.get_song(song_id)
                 file_path = await self._download_source_audio_to_temp(
                     song_data.get("url", ""),
                     song_data.get("name", file_query),
@@ -2293,20 +2416,14 @@ class CurrentCortexPlugin(Star):
             if direct_match:
                 direct_query = direct_match.group(2).strip()
                 logger.info(
-                    f"[Music] Direct play '{direct_query}' for user {user_name}"
+                    f"[Music] Direct play '{direct_query}' for user {user_name} (source={music_source})"
                 )
-                songs = await self._netease_client.search_songs(direct_query)
-                if not songs:
-                    yield event.plain_result(f"😕 未找到与「{direct_query}」相关的歌曲")
+                try:
+                    song_data, used_source = await self._search_and_get(music_source, direct_query)
+                except NeteaseAPIError as e:
+                    yield event.plain_result(f"😕 未找到与「{direct_query}」相关的歌曲\n💡 {e}")
                     return
 
-                first_song = songs[0]
-                song_id = str(first_song.get("id", ""))
-                if not song_id:
-                    yield event.plain_result("⚠️ 搜索结果异常，未能获取歌曲ID")
-                    return
-
-                song_data = await self._netease_client.get_song(song_id)
                 response_items = await self._format_song_response(
                     song_data, event, direct_mode=True
                 )
@@ -2315,21 +2432,15 @@ class CurrentCortexPlugin(Star):
                 return
 
             # 点歌模式：搜索并获取第一首歌的详细信息
-            logger.info(f"[Music] Quick play '{query}' for user {user_name}")
-            songs = await self._netease_client.search_songs(query)
-            if not songs:
+            logger.info(f"[Music] Quick play '{query}' for user {user_name} (source={music_source})")
+            try:
+                song_data, used_source = await self._search_and_get(music_source, query)
+            except NeteaseAPIError as e:
                 yield event.plain_result(
-                    f"😕 未找到与「{query}」相关的歌曲\n💡 请尝试其他关键词"
+                    f"😕 未找到与「{query}」相关的歌曲\n💡 请尝试其他关键词或切换音源（/音源）"
                 )
                 return
 
-            first_song = songs[0]
-            song_id = str(first_song.get("id", ""))
-            if not song_id:
-                yield event.plain_result("⚠️ 搜索结果异常，未能获取歌曲ID")
-                return
-
-            song_data = await self._netease_client.get_song(song_id)
             response_items = await self._format_song_response(song_data, event)
             for item in response_items:
                 yield item
@@ -2364,11 +2475,11 @@ class CurrentCortexPlugin(Star):
             yield event.plain_result(MUSIC_HELP_TEXT)
             return
 
-        if not self._netease_client:
+        if not self._netease_client and not self._kugou_client:
             logger.warning(
                 f"[PlaySong] API client not initialized for user {user_name}"
             )
-            yield event.plain_result(_format_api_key_not_configured("网易云音乐点歌"))
+            yield event.plain_result(_format_api_key_not_configured("音乐点歌"))
             return
 
         query = self._parse_play_song_params(message_str)
@@ -2384,21 +2495,16 @@ class CurrentCortexPlugin(Star):
             yield event.plain_result(hint)
             return
         try:
-            logger.info(f"[PlaySong] Direct play '{query}' for user {user_name}")
-            songs = await self._netease_client.search_songs(query)
-            if not songs:
+            music_source = self._get_music_source(event)
+            logger.info(f"[PlaySong] Direct play '{query}' for user {user_name} (source={music_source})")
+            try:
+                song_data, used_source = await self._search_and_get(music_source, query)
+            except NeteaseAPIError as e:
                 yield event.plain_result(
-                    f"😕 未找到与「{query}」相关的歌曲\n💡 请尝试其他关键词"
+                    f"😕 未找到与「{query}」相关的歌曲\n💡 请尝试其他关键词或切换音源（/音源）"
                 )
                 return
 
-            first_song = songs[0]
-            song_id = str(first_song.get("id", ""))
-            if not song_id:
-                yield event.plain_result("⚠️ 搜索结果异常，未能获取歌曲ID")
-                return
-
-            song_data = await self._netease_client.get_song(song_id)
             response_items = await self._format_song_response(
                 song_data, event, direct_mode=True
             )
@@ -2454,6 +2560,115 @@ class CurrentCortexPlugin(Star):
             return
         self._music_in_progress.discard(umo)
         self._music_last_done[umo] = time.time()
+
+    # --- 音源选择（auto / 网易云 / 酷狗）---
+    def _get_music_source(self, event: AstrMessageEvent) -> str:
+        """返回当前会话的音源偏好（auto/netease/kugou），未设置则返回默认。"""
+        umo = event.unified_msg_origin
+        return self._music_source_pref.get(umo, self._music_default_source)
+
+    def _resolve_single_source(self, source: str):
+        """把具体音源名(netease/kugou)解析为对应客户端。auto 不应传到这里。"""
+        if source == "kugou":
+            return self._kugou_client
+        return self._netease_client  # 默认/兜底走网易云
+
+    async def _try_source(
+        self, source: str, query: str
+    ) -> Optional[tuple]:
+        """尝试单一音源：搜索→取首首歌详情。成功返回 (song_data, source)，失败返回 None。
+
+        失败包括：搜索为空、取详情异常、详情无播放链接（VIP/无版权）。
+        """
+        client = self._resolve_single_source(source)
+        if client is None:
+            return None
+        try:
+            songs = await client.search_songs(query)
+            if not songs:
+                return None
+            first = songs[0]
+            song_id = str(first.get("id", ""))
+            hash_val = str(first.get("hash", "")) if source == "kugou" else ""
+            if source == "kugou" and not hash_val and not song_id:
+                return None
+            if source == "netease" and not song_id:
+                return None
+            song_data = await client.get_song(song_id, hash_val) if source == "kugou" else await client.get_song(song_id)
+            # 必须有播放链接才算成功
+            if not song_data.get("url"):
+                return None
+            return (song_data, source)
+        except Exception as e:
+            logger.info(f"[Music] 音源 {source} 取歌失败，将尝试下一个: {e}")
+            return None
+
+    async def _search_and_get(
+        self, source: str, query: str
+    ) -> tuple:
+        """统一搜索+取详情入口，处理 auto 自动路由。
+
+        - source=auto：网易云优先，失败(VIP/无版权/空/异常)转酷狗
+        - source=netease/kugou：仅走指定源
+        返回 (song_data, used_source)；全部失败抛 NeteaseAPIError。
+        """
+        if source == "auto":
+            result = await self._try_source("netease", query)
+            if result:
+                return result
+            logger.info(f"[Music] auto 模式：网易云未取到「{query}」，转酷狗")
+            result = await self._try_source("kugou", query)
+            if result:
+                return result
+            raise NeteaseAPIError("网易云与酷狗均未找到可播放的歌曲")
+        # 指定单一源
+        result = await self._try_source(source, query)
+        if result:
+            return result
+        src_name = {"netease": "网易云", "kugou": "酷狗"}.get(source, source)
+        raise NeteaseAPIError(f"{src_name}未找到可播放的歌曲")
+
+    @filter.command("音源")
+    async def music_source_command(self, event: AstrMessageEvent):
+        """查看或切换当前会话的点歌音源（auto/网易云/酷狗）。"""
+        message_str = event.message_str.strip()
+        # 解析参数：去掉命令前缀和「音源」
+        cleaned = re.sub(r"^[/!！]\s*音源\s*", "", message_str, flags=re.IGNORECASE)
+        cleaned = re.sub(r"^音源\s*", "", cleaned, flags=re.IGNORECASE).strip().lower()
+
+        source_names = {"auto": "auto（自动）", "netease": "网易云", "kugou": "酷狗"}
+        alias_map = {
+            "auto": "auto", "自动": "auto", "automatic": "auto",
+            "netease": "netease", "网易云": "netease", "网易": "netease", "wy": "netease",
+            "kugou": "kugou", "酷狗": "kugou", "kg": "kugou",
+        }
+
+        if not cleaned or cleaned in ("help", "-h", "--help", "帮助", "?", "？"):
+            cur = self._get_music_source(event)
+            yield event.plain_result(
+                f"🎵 当前音源：{source_names.get(cur, cur)}\n\n"
+                "💡 用法：\n"
+                "  /音源 auto（自动）  网易云优先，失败转酷狗\n"
+                "  /音源 网易云        仅网易云\n"
+                "  /音源 酷狗          仅酷狗\n\n"
+                "音源按会话(群/私聊)记忆，重启后重置为默认。"
+            )
+            return
+
+        target = alias_map.get(cleaned)
+        if not target:
+            yield event.plain_result(
+                f"❌ 未知音源「{cleaned}」\n💡 可选：auto / 网易云 / 酷狗\n💡 发送 /音源 查看当前状态"
+            )
+            return
+
+        umo = event.unified_msg_origin
+        if umo:
+            self._music_source_pref[umo] = target
+        yield event.plain_result(
+            f"✅ 已切换音源为：{source_names[target]}\n"
+            + ("（网易云优先，失败自动转酷狗）" if target == "auto" else "")
+        )
 
     def _parse_play_song_params(self, message: str) -> Optional[str]:
         """解析 /点歌 命令参数，剥离命令名后返回剩余的歌曲名。"""
@@ -4050,6 +4265,7 @@ class CurrentCortexPlugin(Star):
             ("天气", self._weather_client, lambda c: c.fetch_weather("北京")),
             ("男娘", self._femboy_client, lambda c: c.fetch_femboy_image()),
             ("点歌", self._netease_client, lambda c: c.search_songs("在你的身边")),
+            ("酷狗", self._kugou_client, lambda c: c.search_songs("在你的身边")),
             ("JMComic", self._jmcomic_client, lambda c: c.search("姐姐")),
         ]
 

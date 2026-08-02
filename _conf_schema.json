@@ -49,6 +49,11 @@
     "type": "int",
     "default": 3
   },
+  "music_default_source": {
+    "description": "点歌默认音源：auto（网易云优先，失败自动转酷狗）/ netease（仅网易云）/ kugou（仅酷狗）。用户仍可用 /音源 命令按会话覆盖",
+    "type": "string",
+    "default": "auto"
+  },
   "leiz_api_key": {
     "description": "LeiZ API 统一密钥（请求头 x-api-key）。所有接口（含免费接口）均需携带。留空将禁用 Pixiv/一言/天气/男娘/点歌/JMComic 等全部 LeiZ 接口命令",
     "type": "string",

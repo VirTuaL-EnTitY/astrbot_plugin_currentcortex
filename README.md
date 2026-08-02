@@ -130,8 +130,9 @@ pip install websockets>=10.0   # 仅 DG-LAB 功能需要
 | `/douyin` | `/抖音` | 抖音视频解析 |
 | `/jm` | `/漫画` | JMComic 漫画 |
 | `/jmcommend` | `/漫画推荐` | 漫画随机推荐 |
-| `/music` | `/音乐` | 网易云音乐 |
+| `/music` | `/音乐` | 音乐点歌（网易云/酷狗） |
 | `/点歌` | — | 快捷点歌（仅语音条） |
+| `/音源` | — | 切换点歌音源（auto/网易云/酷狗） |
 | `/hitokoto` | `/一言` | 每日一言 |
 | `/weather` | `/天气` | 天气查询 |
 | `/femboy` | `/男娘` | 男娘图片 |
@@ -298,9 +299,20 @@ pip install websockets>=10.0   # 仅 DG-LAB 功能需要
 
 ---
 
-### 4. 网易云音乐 (`/music`，别名 `/音乐`)
+### 4. 音乐点歌 (`/music`，别名 `/音乐`)
 
-通过 LeiZ Netease API 实现点歌、搜索与播放链接获取。
+通过 LeiZ API 实现点歌、搜索与播放链接获取，支持**网易云**与**酷狗**双音源，并提供 `auto` 自动路由（网易云优先，失败转酷狗）。
+
+#### 音源切换 (`/音源`)
+
+| 指令 | 说明 |
+| --- | --- |
+| `/音源` | 查看当前音源 + 可选项 |
+| `/音源 auto`（自动） | **默认**。网易云优先，VIP/无版权/超时自动转酷狗 |
+| `/音源 网易云` | 仅网易云 |
+| `/音源 酷狗` | 仅酷狗 |
+
+音源按**会话（群/私聊）记忆**，互不影响；重启后重置为默认（`music_default_source` 配置项，默认 auto）。
 
 #### 基本指令
 
@@ -619,6 +631,7 @@ pip install websockets>=10.0   # 仅 DG-LAB 功能需要
 | --- | --- | --- | --- |
 | `music_file_max_bytes` | int | 26214400 | `/音乐 文件` 单文件体积上限（字节，默认 25MB）。超过则自动转码为 128kbps MP3 再发送（需 ffmpeg）；设为 0 不限制（不推荐，易发送失败） |
 | `music_cooldown` | int | 3 | 同一会话连续点歌的最小间隔秒数，防止用户连点触发大量并发下载/转码拖垮服务器。处理中的请求会被提示「请稍候」；设为 0 不限制（不推荐） |
+| `music_default_source` | string | auto | 点歌默认音源：`auto`（网易云优先，失败转酷狗）/ `netease`（仅网易云）/ `kugou`（仅酷狗）。用户仍可用 `/音源` 按会话覆盖 |
 
 ### DG-LAB
 
@@ -851,5 +864,5 @@ astrbot_plugin_currentcortex/
 
 ---
 
-**版本**：v1.5.6  
+**版本**：v1.5.7  
 **仓库**：[GitHub](https://github.com/backrooms-yrc/astrbot_plugin_currentcortex)
