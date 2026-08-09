@@ -1490,7 +1490,7 @@ class CurrentCortexPlugin(Star):
         self._reply_seg_only_llm = bool(config.get("reply_seg_only_llm", True))
         # 分段回复首条消息是否 @ 并引用回复用户（让分段回复有明确归属）。
         self._reply_seg_mention = bool(config.get("reply_seg_mention", True))
-        self._reply_seg_mode = str(config.get("reply_seg_mode", "punct")).strip()
+        self._reply_seg_mode = str(config.get("reply_seg_mode", "llm")).strip()
         self._reply_seg_symbols = str(
             config.get("reply_seg_split_symbols", "。！？!?~～…\n,，")
         )
