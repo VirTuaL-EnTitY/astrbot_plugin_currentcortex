@@ -1,4 +1,33 @@
 {
+  "promo_qq_group": {
+    "description": "插件宣传 QQ 群号（留空则不宣传）",
+    "type": "string",
+    "default": "",
+    "hint": "填写后会在以下位置展示群号：① /交流群 命令可直接查询加群；② 命令帮助与 API 错误提示末尾带上一行群号；③ 大模型回复末尾按设定概率低频追加「交流群：XXXXX」水印。三个渠道均可通过下方开关单独控制"
+  },
+  "promo_qq_group_link": {
+    "description": "加群链接（可选，配合 /交流群 命令展示一键加群）",
+    "type": "string",
+    "default": "",
+    "hint": "可选。填写 QQ 群的分享链接（https://qun.qq.com/... ），/交流群 命令会展示为可点击跳转；留空则只展示群号"
+  },
+  "promo_in_help": {
+    "description": "是否在命令帮助 / API 错误提示里展示群号",
+    "type": "bool",
+    "default": true
+  },
+  "promo_in_reply": {
+    "description": "是否在大模型回复末尾低频追加群号水印",
+    "type": "bool",
+    "default": true
+  },
+  "promo_reply_chance": {
+    "description": "大模型回复追加群号水印的概率（百分比）",
+    "type": "int",
+    "default": 5,
+    "hint": "取值 0~100。设为 0 等于关闭水印；5 表示每 20 条回复大约追加 1 次。建议 3~10，太高会打扰用户",
+    "slider": {"min": 0, "max": 50, "step": 1}
+  },
   "llm_tools_enable": {
     "description": "【LLM 工具总开关】开启后，把插件的图片获取、点歌、电击控制等功能注册为大模型可调用的工具（function calling），AI 即可自主处理「发张图」「来首歌」「电一下」等自然语言请求。关闭则不生效（仅保留原有 / 命令）。电击控制涉及物理设备，请确认安全后开启",
     "type": "bool",

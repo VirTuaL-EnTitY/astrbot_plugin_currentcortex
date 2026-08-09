@@ -1253,6 +1253,12 @@ class CurrentCortexPlugin(Star):
         self._image_proxy = str(config.get("image_proxy", "pixiv.bileizhen.top"))
         self._exclude_ai = bool(config.get("exclude_ai", False))
         self._request_timeout = int(config.get("request_timeout", 15))
+        # 插件宣传 QQ 群：用于 /交流群 命令、帮助/错误提示末尾、回复低频水印。
+        self._promo_qq_group = str(config.get("promo_qq_group", "")).strip()
+        self._promo_qq_group_link = str(config.get("promo_qq_group_link", "")).strip()
+        self._promo_in_help = bool(config.get("promo_in_help", True))
+        self._promo_in_reply = bool(config.get("promo_in_reply", True))
+        self._promo_reply_chance = max(0, min(100, int(config.get("promo_reply_chance", 5))))
         # LLM 工具（function calling）总开关：装饰器在类加载时已注册工具，
         # 此开关控制工具执行时是否放行；关闭时工具返回提示而不执行。
         self._llm_tools_enable = bool(config.get("llm_tools_enable", False))
@@ -1774,6 +1780,62 @@ class CurrentCortexPlugin(Star):
             logger.error(f"[CrossGroupMemory] 注入上下文失败: {e}")
 
     # =================================================================== #
+    # 插件宣传（QQ 群）：/交流群 查询命令 + 帮助/错误提示末尾群号 +
+    # 大模型回复低频水印。群号统一由 _promo_qq_group 配置驱动。
+    # =================================================================== #
+
+    def _promo_group_line(self) -> str:
+        """生成一行群号宣传文本（含链接）；未配置群号时返回空串。"""
+        group = self._promo_qq_group
+        if not group:
+            return ""
+        link = self._promo_qq_group_link
+        if link:
+            return f"💬 插件交流群：{group}（[点击加群]({link})）"
+        return f"💬 插件交流群：{group}"
+
+    def _promo_help_suffix(self) -> str:
+        """命令帮助 / 错误提示末尾要追加的宣传文本；开关关闭或无群号时返回空。"""
+        if not self._promo_in_help:
+            return ""
+        line = self._promo_group_line()
+        return f"\n\n{line}" if line else ""
+
+    def _with_promo(self, text: str) -> str:
+        """给命令帮助 / 错误提示文本追加群号宣传后缀（开关关闭或无群号时原样返回）。"""
+        return text + self._promo_help_suffix()
+
+    def _promo_reply_suffix(self) -> str:
+        """大模型回复末尾低频追加的水印；按概率命中且未配置群号时返回空。
+
+        单条独占一行，避免干扰正文阅读。
+        """
+        if not self._promo_in_reply or not self._promo_qq_group:
+            return ""
+        if random.randint(1, 100) > self._promo_reply_chance:
+            return ""
+        return f"\n\n💬 插件交流群：{self._promo_qq_group}"
+
+    @filter.command("交流群", alias={"群号", "加群", "plugin_group"})
+    async def promo_group_command(self, event: AstrMessageEvent):
+        """查询插件官方交流群号。"""
+        if not self._promo_qq_group:
+            yield event.plain_result("⚠️ 管理员尚未配置插件交流群号")
+            return
+        link = self._promo_qq_group_link
+        if link:
+            yield event.plain_result(
+                f"💬 CurrentCortex 插件交流群\n"
+                f"群号：{self._promo_qq_group}\n"
+                f"👉 {link}"
+            )
+        else:
+            yield event.plain_result(
+                f"💬 CurrentCortex 插件交流群\n"
+                f"群号：{self._promo_qq_group}\n欢迎加入交流使用心得～"
+            )
+
+    # =================================================================== #
     # LLM 工具（function calling）：把图片获取 / 点歌 / 电击控制注册为
     # 大模型可调用的工具。装饰器在类加载时注册，运行时由 _llm_tools_enable
     # 开关控制是否放行；媒体类工具直接 event.send，return str 给 LLM 总结。
@@ -2104,6 +2166,8 @@ class CurrentCortexPlugin(Star):
         手动写回对话历史（因为绕过了框架发送，assistant 回合需自行记录）。
         """
         if not self._reply_seg_enable:
+            # 分段关闭时，仍处理低频水印（水印独立于分段开关）。
+            self._append_promo_to_result(event)
             return
         try:
             result = event.get_result()
@@ -2125,20 +2189,24 @@ class CurrentCortexPlugin(Star):
             if not segments:
                 segments = self._segment_text(raw_text)
             if len(segments) <= 1:
-                return  # 无需分段，交回框架正常发送
+                # 无需分段：把水印追加到框架结果，交回框架正常发送。
+                self._append_promo_to_result(event)
+                return
 
             full_text = "\n\n".join(segments)
             result.chain.clear()  # 阻止框架再发一次原文
 
             lo, hi = self._reply_seg_delay_range
+            promo = self._promo_reply_suffix()
             for i, seg in enumerate(segments):
                 if i > 0:
                     await asyncio.sleep(random.uniform(lo, hi))
+                text = seg + (promo if i == len(segments) - 1 else "")
                 if i == 0 and self._reply_seg_mention:
                     # 首条消息 @ 并引用回复用户，让分段回复有明确归属
-                    await event.send(self._build_seg_first_chain(event, seg))
+                    await event.send(self._build_seg_first_chain(event, text))
                 else:
-                    await event.send(MessageChain().message(seg))
+                    await event.send(MessageChain().message(text))
 
             # 绕过框架发送后，需手动写回对话历史
             await self._save_seg_history(event, full_text)
@@ -2164,6 +2232,29 @@ class CurrentCortexPlugin(Star):
         except Exception as e:  # noqa: BLE001
             logger.debug(f"[ReplySeg] 构造 @/回复段失败，降级纯文本: {e}")
         return MessageChain(chain=chain)
+
+    def _append_promo_to_result(self, event: AstrMessageEvent) -> None:
+        """把低频水印追加到非分段回复的 result.chain（交由框架正常发送）。
+
+        仅对 LLM 结果生效（避免命令回复被加水印）；命中概率且配置了群号才追加。
+        """
+        promo = self._promo_reply_suffix()
+        if not promo:
+            return
+        try:
+            result = event.get_result()
+            if not result or not result.chain:
+                return
+            if self._reply_seg_only_llm and not result.is_model_result():
+                return
+            # 追加到最后一个 Plain 段；没有 Plain 段则新建一个。
+            for comp in reversed(result.chain):
+                if isinstance(comp, Comp.Plain):
+                    comp.text += promo
+                    return
+            result.chain.append(Comp.Plain(promo.lstrip("\n")))
+        except Exception as e:  # noqa: BLE001
+            logger.debug(f"[Promo] 追加水印失败: {e}")
 
     # llm 模式：分段密度档位映射。每档定义「每段目标字数区间」+「默认段数上限」
     # +「prompt 引导语」。low=每段长(信息密度大)、medium=适中、high=每段短(更碎更活泼)。
@@ -2533,14 +2624,14 @@ class CurrentCortexPlugin(Star):
 
         if self._is_help_command(message_str):
             logger.info(f"[Hitokoto] Help command triggered by {user_name}")
-            yield event.plain_result(HITOKOTO_HELP_TEXT)
+            yield event.plain_result(self._with_promo(HITOKOTO_HELP_TEXT))
             return
 
         if not self._hitokoto_client:
             logger.warning(
                 f"[Hitokoto] API client not initialized for user {user_name}"
             )
-            yield event.plain_result(_format_api_key_not_configured("每日一言"))
+            yield event.plain_result(self._with_promo(_format_api_key_not_configured("每日一言")))
             return
 
         try:
@@ -2613,12 +2704,12 @@ class CurrentCortexPlugin(Star):
 
         if self._is_help_command(message_str):
             logger.info(f"[Weather] Help command triggered by {user_name}")
-            yield event.plain_result(WEATHER_HELP_TEXT)
+            yield event.plain_result(self._with_promo(WEATHER_HELP_TEXT))
             return
 
         if not self._weather_client:
             logger.warning(f"[Weather] API client not initialized for user {user_name}")
-            yield event.plain_result(_format_api_key_not_configured("天气查询"))
+            yield event.plain_result(self._with_promo(_format_api_key_not_configured("天气查询")))
             return
 
         try:
@@ -2799,12 +2890,12 @@ class CurrentCortexPlugin(Star):
 
         if self._is_help_command(message_str):
             logger.info(f"[Femboy] Help command triggered by {user_name}")
-            yield event.plain_result(FEMBOY_HELP_TEXT)
+            yield event.plain_result(self._with_promo(FEMBOY_HELP_TEXT))
             return
 
         if not self._femboy_client:
             logger.warning(f"[Femboy] API client not initialized for user {user_name}")
-            yield event.plain_result(_format_api_key_not_configured("男娘图片"))
+            yield event.plain_result(self._with_promo(_format_api_key_not_configured("男娘图片")))
             return
 
         try:
@@ -2878,12 +2969,12 @@ class CurrentCortexPlugin(Star):
 
         if self._is_help_command(message_str):
             logger.info(f"[Music] Help command triggered by {user_name}")
-            yield event.plain_result(MUSIC_HELP_TEXT)
+            yield event.plain_result(self._with_promo(MUSIC_HELP_TEXT))
             return
 
         if not self._netease_client and not self._kugou_client:
             logger.warning(f"[Music] API client not initialized for user {user_name}")
-            yield event.plain_result(_format_api_key_not_configured("音乐点歌"))
+            yield event.plain_result(self._with_promo(_format_api_key_not_configured("音乐点歌")))
             return
 
         # 并发防护：进行中去重 + 冷却，防止连点触发大量并发下载/转码
@@ -3069,14 +3160,14 @@ class CurrentCortexPlugin(Star):
 
         if self._is_help_command(message_str):
             logger.info(f"[PlaySong] Help command triggered by {user_name}")
-            yield event.plain_result(MUSIC_HELP_TEXT)
+            yield event.plain_result(self._with_promo(MUSIC_HELP_TEXT))
             return
 
         if not self._netease_client and not self._kugou_client:
             logger.warning(
                 f"[PlaySong] API client not initialized for user {user_name}"
             )
-            yield event.plain_result(_format_api_key_not_configured("音乐点歌"))
+            yield event.plain_result(self._with_promo(_format_api_key_not_configured("音乐点歌")))
             return
 
         query = self._parse_play_song_params(message_str)
@@ -3809,12 +3900,12 @@ class CurrentCortexPlugin(Star):
 
         if self._is_help_command(message_str):
             logger.info(f"Help command triggered by {user_name}")
-            yield event.plain_result(HELP_TEXT)
+            yield event.plain_result(self._with_promo(HELP_TEXT))
             return
 
         if not self._api_client:
             logger.warning(f"Pixiv API client not initialized for user {user_name}")
-            yield event.plain_result(_format_api_key_not_configured("Pixiv 随机图片"))
+            yield event.plain_result(self._with_promo(_format_api_key_not_configured("Pixiv 随机图片")))
             return
 
         try:
@@ -4096,12 +4187,12 @@ class CurrentCortexPlugin(Star):
 
         if self._is_help_command(message_str):
             logger.info(f"[JMComic] Help command triggered by {user_name}")
-            yield event.plain_result(JMCOMIC_HELP_TEXT)
+            yield event.plain_result(self._with_promo(JMCOMIC_HELP_TEXT))
             return
 
         if not self._jmcomic_client:
             logger.warning(f"[JMComic] API client not initialized for user {user_name}")
-            yield event.plain_result(_format_api_key_not_configured("JMComic 漫画"))
+            yield event.plain_result(self._with_promo(_format_api_key_not_configured("JMComic 漫画")))
             return
 
         try:
@@ -4617,7 +4708,7 @@ class CurrentCortexPlugin(Star):
 
         if not self._jmcomic_client:
             logger.warning(f"[JMComic] API client not initialized for user {user_name}")
-            yield event.plain_result(_format_api_key_not_configured("JMComic 漫画"))
+            yield event.plain_result(self._with_promo(_format_api_key_not_configured("JMComic 漫画")))
             return
 
         try:
@@ -4710,7 +4801,7 @@ class CurrentCortexPlugin(Star):
         user_name = event.get_sender_name()
         message_str = event.message_str.strip()
         if self._is_help_command(message_str):
-            yield event.plain_result(MEDIA_PARSER_HELP_TEXT)
+            yield event.plain_result(self._with_promo(MEDIA_PARSER_HELP_TEXT))
             return
         url = self._parse_media_url(message_str)
         if not url:
@@ -4975,12 +5066,12 @@ class CurrentCortexPlugin(Star):
         message_str = event.message_str.strip()
 
         if self._is_help_command(message_str):
-            yield event.plain_result(API_TEST_HELP_TEXT)
+            yield event.plain_result(self._with_promo(API_TEST_HELP_TEXT))
             return
 
         # 未配置统一 API Key：6 个客户端均为 None，无法做任何探测
         if not self._leiz_api_key:
-            yield event.plain_result(_format_api_key_not_configured("接口连通性测试"))
+            yield event.plain_result(self._with_promo(_format_api_key_not_configured("接口连通性测试")))
             return
 
         yield event.plain_result("🔍 正在并行探测 LeiZ 接口，请稍候…")

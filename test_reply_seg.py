@@ -187,6 +187,12 @@ def _make_plugin(**overrides):
     inst._reply_seg_llm_min_chars = overrides.get("llm_min_chars", 30)
     inst._reply_seg_llm_timeout = overrides.get("llm_timeout", 15)
     inst._reply_seg_llm_max_tokens = overrides.get("llm_max_tokens", 512)
+    # 宣传（QQ 群）相关
+    inst._promo_qq_group = overrides.get("promo_qq_group", "")
+    inst._promo_qq_group_link = overrides.get("promo_qq_group_link", "")
+    inst._promo_in_help = overrides.get("promo_in_help", True)
+    inst._promo_in_reply = overrides.get("promo_in_reply", True)
+    inst._promo_reply_chance = overrides.get("promo_reply_chance", 0)  # 测试默认不命中
     # _segment_by_llm 需要 context.llm_generate / get_current_chat_provider_id
     inst.context = overrides.get("context", _FakeContext())
     return inst
@@ -661,6 +667,55 @@ def test_build_seg_first_chain_no_sender():
 
 
 # --------------------------------------------------------------------------- #
+# 宣传（QQ 群）测试
+# --------------------------------------------------------------------------- #
+
+
+def test_promo_group_line():
+    """群号格式正确，含链接时展示可点击文本。"""
+    inst = _make_plugin(promo_qq_group="1106353813")
+    line = inst._promo_group_line()
+    _check_true("含群号", "1106353813" in line, line)
+
+    inst2 = _make_plugin(promo_qq_group="1106353813",
+                         promo_qq_group_link="https://qun.qq.com/xxx")
+    line2 = inst2._promo_group_line()
+    _check_true("含链接", "https://qun.qq.com/xxx" in line2, line2)
+
+    inst3 = _make_plugin(promo_qq_group="")
+    _check("无群号返回空", inst3._promo_group_line(), "")
+
+
+def test_promo_with_promo():
+    """_with_promo 在 help 文本末尾追加群号；开关关闭时不追加。"""
+    inst = _make_plugin(promo_qq_group="1106353813", promo_in_help=True)
+    result = inst._with_promo("帮助文本")
+    _check_true("help追加群号", "1106353813" in result and result.startswith("帮助文本"), result)
+
+    inst2 = _make_plugin(promo_qq_group="1106353813", promo_in_help=False)
+    _check("开关关闭不追加", inst2._with_promo("帮助文本"), "帮助文本")
+
+
+def test_promo_reply_suffix_probability():
+    """水印按概率命中：chance=0 永不命中，chance=100 必命中。"""
+    inst0 = _make_plugin(promo_qq_group="123", promo_in_reply=True, promo_reply_chance=0)
+    for _ in range(20):
+        _check_true("0%不命中", inst0._promo_reply_suffix() == "", "chance=0 不应命中")
+
+    inst100 = _make_plugin(promo_qq_group="123", promo_in_reply=True, promo_reply_chance=100)
+    for _ in range(20):
+        _check_true("100%必命中", inst100._promo_reply_suffix() != "", "chance=100 应命中")
+
+
+def test_promo_reply_suffix_disabled():
+    """开关关闭或无群号时水印为空。"""
+    inst = _make_plugin(promo_qq_group="123", promo_in_reply=False, promo_reply_chance=100)
+    _check("回复开关关闭", inst._promo_reply_suffix(), "")
+    inst2 = _make_plugin(promo_qq_group="", promo_in_reply=True, promo_reply_chance=100)
+    _check("无群号", inst2._promo_reply_suffix(), "")
+
+
+# --------------------------------------------------------------------------- #
 # 入口
 # --------------------------------------------------------------------------- #
 
@@ -702,6 +757,11 @@ TESTS = [
     test_build_seg_first_chain_with_mention,
     test_build_seg_first_chain_no_message_id,
     test_build_seg_first_chain_no_sender,
+    # 宣传（QQ 群）
+    test_promo_group_line,
+    test_promo_with_promo,
+    test_promo_reply_suffix_probability,
+    test_promo_reply_suffix_disabled,
 ]
 
 
