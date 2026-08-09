@@ -1938,6 +1938,12 @@ class CurrentCortexPlugin(Star):
                 url = await self.html_render(
                     _COMMAND_LIST_TMPL,
                     {"categories": COMMAND_CATEGORIES, "total": total},
+                    options={
+                        "type": "png",       # PNG 无损，避免 JPEG 压缩模糊
+                        "quality": 100,
+                        "omit_background": False,
+                        "deviceScaleFactor": 2,  # 2x 分辨率渲染，高清不糊
+                    },
                 )
                 if url:
                     yield event.image_result(url)
