@@ -14,6 +14,8 @@ Pixiv 随机图片 · 每日一言 · 天气查询 · 男娘图片 · 网易云�
 >
 > 欢迎加入！在这里可以获取更新通知、反馈问题与建议、交流使用心得，开发者也会在群内答疑。
 > 遇到 bug 或有新功能想法，也可以直接在群里 @ 维护者，或到 [Issues](https://github.com/backrooms-yrc/astrbot_plugin_currentcortex/issues) 提交。
+>
+> ⚠️ **本群是 CurrentCortex 插件的社区交流群，与 [LeiZ API](https://api.bileizhen.top) 官方无关**。本插件是基于 LeiZ API 开发的**社区（第三方）插件**，LeiZ API 的注册、Key 获取、接口计费、故障等问题请到 LeiZ API 官网及其官方渠道咨询，勿在本群反馈。
 
 ---
 
@@ -97,6 +99,8 @@ git clone https://github.com/backrooms-yrc/astrbot_plugin_currentcortex.git
 打开 AstrBot 管理面板 → 插件管理 → 本插件 → 配置，把上一步获取的 Key 填入 **`leiz_api_key`** 字段，保存后重启插件。
 
 未配置时，Pixiv / 一言 / 天气 / 男娘 / 点歌 / JMComic 等全部 LeiZ 接口命令将不可用，调用时会给出配置引导提示。
+
+> ⚠️ **本插件是基于 LeiZ API 的社区（第三方）插件，与 LeiZ API 官方相互独立**。API Key 的注册/获取、接口计费、额度、上游故障等问题请到 [LeiZ API 官网](https://api.bileizhen.top) 及其官方渠道咨询；本插件的交流群仅处理插件本身的使用问题。
 
 > **旧版迁移**：v1.3.x 及更早版本的 `femboy_api_key` 已合并为统一的 `leiz_api_key`。若未填新字段但保留了旧字段，插件会自动作为统一 Key 使用并提示迁移，建议尽快改填到 `leiz_api_key`。
 
