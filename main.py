@@ -1789,6 +1789,15 @@ class CurrentCortexPlugin(Star):
         """给命令帮助 / 错误提示文本追加群号宣传后缀。"""
         return text + "\n\n" + self._promo_group_line()
 
+    def _maybe_promo_after_image(self) -> str:
+        """图片发送成功后，按概率（约 10%）返回群号宣传文本；未命中返回空。
+
+        仅在用户主动获取图片后低频触发，不污染日常对话。
+        """
+        if random.randint(1, 100) > 10:
+            return ""
+        return self._promo_group_line()
+
     @filter.command("交流群", alias={"群号", "加群", "plugin_group"})
     async def promo_group_command(self, event: AstrMessageEvent):
         """查询插件官方交流群号。"""
@@ -1831,6 +1840,12 @@ class CurrentCortexPlugin(Star):
                 except Exception as e:  # noqa: BLE001
                     logger.warning(f"[LLMTool] 发送图片段失败: {e}")
             num = params.get("num", 1)
+            promo = self._maybe_promo_after_image()
+            if promo:
+                try:
+                    await event.send(MessageChain().message(promo))
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"[LLMTool] 发送群号段失败: {e}")
             return f"已{'发送图片' if sent else '尝试发送'}（请求 {num} 张）"
         except PixivAPIError as e:
             return f"获取图片失败：{e}"
@@ -1929,6 +1944,12 @@ class CurrentCortexPlugin(Star):
                     await event.send(item)
                 except Exception as e:  # noqa: BLE001
                     logger.warning(f"[LLMTool] 发送男娘图片段失败: {e}")
+            promo = self._maybe_promo_after_image()
+            if promo:
+                try:
+                    await event.send(MessageChain().message(promo))
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"[LLMTool] 发送群号段失败: {e}")
             return "已发送一张男娘图片"
         except FemboyAPIError as e:
             return f"获取男娘图片失败：{e}"
@@ -2840,6 +2861,9 @@ class CurrentCortexPlugin(Star):
             response_items = await self._process_femboy_response(result, event)
             for item in response_items:
                 yield item
+            promo = self._maybe_promo_after_image()
+            if promo:
+                yield event.plain_result(promo)
 
         except FemboyAPIError as e:
             logger.error(f"[Femboy] API error for user {user_name}: {e}")
@@ -3853,6 +3877,9 @@ class CurrentCortexPlugin(Star):
             response_items = await self._process_response(result, params, event)
             for item in response_items:
                 yield item
+            promo = self._maybe_promo_after_image()
+            if promo:
+                yield event.plain_result(promo)
 
         except PixivAPIError as e:
             logger.error(f"Pixiv API error for user {user_name}: {e}")

@@ -682,6 +682,21 @@ def test_promo_with_promo():
                 Cls._PROMO_QQ_GROUP in result and result.startswith("帮助文本"), result)
 
 
+def test_promo_after_image_probability():
+    """图片后群号按概率（~10%）触发：大量采样命中率和非命中率合理。"""
+    inst = _make_plugin()
+    hit = sum(1 for _ in range(500) if inst._maybe_promo_after_image())
+    # 500 次中命中率应在 10% 附近（容差 3%~18%）
+    _check_true("概率合理", 0.03 <= hit / 500 <= 0.18, f"命中率 {hit}/500 = {hit/500:.0%}")
+    # 命中时应含群号、无链接
+    for _ in range(50):
+        text = inst._maybe_promo_after_image()
+        if text:
+            _check_true("含群号", Cls._PROMO_QQ_GROUP in text, text)
+            _check_true("不含链接", "http" not in text, text)
+            break
+
+
 # --------------------------------------------------------------------------- #
 # 入口
 # --------------------------------------------------------------------------- #
@@ -727,6 +742,7 @@ TESTS = [
     # 宣传（QQ 群）
     test_promo_group_line,
     test_promo_with_promo,
+    test_promo_after_image_probability,
 ]
 
 
