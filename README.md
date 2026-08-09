@@ -944,5 +944,5 @@ astrbot_plugin_currentcortex/
 
 ---
 
-**版本**：v1.5.7  
+**版本**：v1.7.0  
 **仓库**：[GitHub](https://github.com/backrooms-yrc/astrbot_plugin_currentcortex)
