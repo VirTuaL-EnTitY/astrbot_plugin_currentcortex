@@ -1789,15 +1789,6 @@ class CurrentCortexPlugin(Star):
         """给命令帮助 / 错误提示文本追加群号宣传后缀。"""
         return text + "\n\n" + self._promo_group_line()
 
-    def _promo_reply_suffix(self) -> str:
-        """大模型回复末尾低频追加的水印（约 5% 概率命中）；未命中返回空。
-
-        单条独占一行，避免干扰正文阅读。
-        """
-        if random.randint(1, 100) > 5:
-            return ""
-        return f"\n\n💬 插件交流群：{self._PROMO_QQ_GROUP}"
-
     @filter.command("交流群", alias={"群号", "加群", "plugin_group"})
     async def promo_group_command(self, event: AstrMessageEvent):
         """查询插件官方交流群号。"""
@@ -2137,8 +2128,6 @@ class CurrentCortexPlugin(Star):
         手动写回对话历史（因为绕过了框架发送，assistant 回合需自行记录）。
         """
         if not self._reply_seg_enable:
-            # 分段关闭时，仍处理低频水印（水印独立于分段开关）。
-            self._append_promo_to_result(event)
             return
         try:
             result = event.get_result()
@@ -2160,19 +2149,16 @@ class CurrentCortexPlugin(Star):
             if not segments:
                 segments = self._segment_text(raw_text)
             if len(segments) <= 1:
-                # 无需分段：把水印追加到框架结果，交回框架正常发送。
-                self._append_promo_to_result(event)
-                return
+                return  # 无需分段，交回框架正常发送
 
             full_text = "\n\n".join(segments)
             result.chain.clear()  # 阻止框架再发一次原文
 
             lo, hi = self._reply_seg_delay_range
-            promo = self._promo_reply_suffix()
             for i, seg in enumerate(segments):
                 if i > 0:
                     await asyncio.sleep(random.uniform(lo, hi))
-                text = seg + (promo if i == len(segments) - 1 else "")
+                text = seg
                 if i == 0 and self._reply_seg_mention:
                     # 首条消息 @ 并引用回复用户，让分段回复有明确归属
                     await event.send(self._build_seg_first_chain(event, text))
@@ -2203,29 +2189,6 @@ class CurrentCortexPlugin(Star):
         except Exception as e:  # noqa: BLE001
             logger.debug(f"[ReplySeg] 构造 @/回复段失败，降级纯文本: {e}")
         return MessageChain(chain=chain)
-
-    def _append_promo_to_result(self, event: AstrMessageEvent) -> None:
-        """把低频水印追加到非分段回复的 result.chain（交由框架正常发送）。
-
-        仅对 LLM 结果生效（避免命令回复被加水印）；命中概率且配置了群号才追加。
-        """
-        promo = self._promo_reply_suffix()
-        if not promo:
-            return
-        try:
-            result = event.get_result()
-            if not result or not result.chain:
-                return
-            if self._reply_seg_only_llm and not result.is_model_result():
-                return
-            # 追加到最后一个 Plain 段；没有 Plain 段则新建一个。
-            for comp in reversed(result.chain):
-                if isinstance(comp, Comp.Plain):
-                    comp.text += promo
-                    return
-            result.chain.append(Comp.Plain(promo.lstrip("\n")))
-        except Exception as e:  # noqa: BLE001
-            logger.debug(f"[Promo] 追加水印失败: {e}")
 
     # llm 模式：分段密度档位映射。每档定义「每段目标字数区间」+「默认段数上限」
     # +「prompt 引导语」。low=每段长(信息密度大)、medium=适中、high=每段短(更碎更活泼)。
