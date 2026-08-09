@@ -1,15 +1,15 @@
 {
   "promo_qq_group": {
-    "description": "插件宣传 QQ 群号（留空则不宣传）",
+    "description": "插件宣传 QQ 群号",
     "type": "string",
-    "default": "",
-    "hint": "填写后会在以下位置展示群号：① /交流群 命令可直接查询加群；② 命令帮助与 API 错误提示末尾带上一行群号；③ 大模型回复末尾按设定概率低频追加「交流群：XXXXX」水印。三个渠道均可通过下方开关单独控制"
+    "default": "1106353813",
+    "hint": "群号会在以下位置展示：① /交流群 命令可直接查询加群；② 命令帮助与 API 错误提示末尾带上一行群号；③ 大模型回复末尾按设定概率低频追加「交流群：XXXXX」水印。三个渠道均可通过下方开关单独控制。留空则不宣传"
   },
   "promo_qq_group_link": {
-    "description": "加群链接（可选，配合 /交流群 命令展示一键加群）",
+    "description": "加群链接（配合 /交流群 命令展示一键加群）",
     "type": "string",
-    "default": "",
-    "hint": "可选。填写 QQ 群的分享链接（https://qun.qq.com/... ），/交流群 命令会展示为可点击跳转；留空则只展示群号"
+    "default": "https://qun.qq.com/universal-share/share?ac=1&authKey=OmLNlwPdKBlOMNNic9zCRIlfAVn%2BqsvY0rZDEpEYLNsZ6D5UvREADl%2FeNd2nGAUH&busi_data=eyJncm91cENvZGUiOiIxMTA2MzUzODEzIiwidG9rZW4iOiJERWFBR1hSV1djMSswSHI4MEpmQzhmTFlzZTN0Q2VvbFEvZXpQbWZIaHNNSW5Dd2dHcFVKVVJmTTdzWG1OWXBVIiwidWluIjoiMTk0NTgyNjM0NiJ9&data=AFoZ21e7OHbTEKvm7w_zeEuScAfmBnqoa2V6OZFXfaajJ7cTjHQNk3JxtyRUTFE69pnNSWekOVIAA54qMXW97Q&svctype=4&tempid=h5_group_info",
+    "hint": "QQ 群的分享链接，/交流群 命令会展示为可点击跳转。留空则只展示群号"
   },
   "promo_in_help": {
     "description": "是否在命令帮助 / API 错误提示里展示群号",

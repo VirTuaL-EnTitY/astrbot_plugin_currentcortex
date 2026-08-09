@@ -1254,8 +1254,13 @@ class CurrentCortexPlugin(Star):
         self._exclude_ai = bool(config.get("exclude_ai", False))
         self._request_timeout = int(config.get("request_timeout", 15))
         # 插件宣传 QQ 群：用于 /交流群 命令、帮助/错误提示末尾、回复低频水印。
-        self._promo_qq_group = str(config.get("promo_qq_group", "")).strip()
-        self._promo_qq_group_link = str(config.get("promo_qq_group_link", "")).strip()
+        self._promo_qq_group = str(config.get(
+            "promo_qq_group", "1106353813"
+        )).strip()
+        self._promo_qq_group_link = str(config.get(
+            "promo_qq_group_link",
+            "https://qun.qq.com/universal-share/share?ac=1&authKey=OmLNlwPdKBlOMNNic9zCRIlfAVn%2BqsvY0rZDEpEYLNsZ6D5UvREADl%2FeNd2nGAUH&busi_data=eyJncm91cENvZGUiOiIxMTA2MzUzODEzIiwidG9rZW4iOiJERWFBR1hSV1djMSswSHI4MEpmQzhmTFlzZTN0Q2VvbFEvZXpQbWZIaHNNSW5Dd2dHcFVKVVJmTTdzWG1OWXBVIiwidWluIjoiMTk0NTgyNjM0NiJ9&data=AFoZ21e7OHbTEKvm7w_zeEuScAfmBnqoa2V6OZFXfaajJ7cTjHQNk3JxtyRUTFE69pnNSWekOVIAA54qMXW97Q&svctype=4&tempid=h5_group_info"
+        )).strip()
         self._promo_in_help = bool(config.get("promo_in_help", True))
         self._promo_in_reply = bool(config.get("promo_in_reply", True))
         self._promo_reply_chance = max(0, min(100, int(config.get("promo_reply_chance", 5))))
