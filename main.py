@@ -1253,11 +1253,6 @@ class CurrentCortexPlugin(Star):
         self._image_proxy = str(config.get("image_proxy", "pixiv.bileizhen.top"))
         self._exclude_ai = bool(config.get("exclude_ai", False))
         self._request_timeout = int(config.get("request_timeout", 15))
-        # 插件宣传 QQ 群：群号与链接为固定官方值（类常量），不开放给用户修改；
-        # 仅开放下方三个展示渠道的开关。
-        self._promo_in_help = bool(config.get("promo_in_help", True))
-        self._promo_in_reply = bool(config.get("promo_in_reply", True))
-        self._promo_reply_chance = max(0, min(100, int(config.get("promo_reply_chance", 5))))
         # LLM 工具（function calling）总开关：装饰器在类加载时已注册工具，
         # 此开关控制工具执行时是否放行；关闭时工具返回提示而不执行。
         self._llm_tools_enable = bool(config.get("llm_tools_enable", False))
@@ -1793,25 +1788,16 @@ class CurrentCortexPlugin(Star):
         """生成一行群号宣传文本（含链接）。"""
         return f"💬 插件交流群：{self._PROMO_QQ_GROUP}（[点击加群]({self._PROMO_QQ_GROUP_LINK})）"
 
-    def _promo_help_suffix(self) -> str:
-        """命令帮助 / 错误提示末尾要追加的宣传文本；开关关闭或无群号时返回空。"""
-        if not self._promo_in_help:
-            return ""
-        line = self._promo_group_line()
-        return f"\n\n{line}" if line else ""
-
     def _with_promo(self, text: str) -> str:
-        """给命令帮助 / 错误提示文本追加群号宣传后缀（开关关闭或无群号时原样返回）。"""
-        return text + self._promo_help_suffix()
+        """给命令帮助 / 错误提示文本追加群号宣传后缀。"""
+        return text + "\n\n" + self._promo_group_line()
 
     def _promo_reply_suffix(self) -> str:
-        """大模型回复末尾低频追加的水印；按概率命中时返回，否则空。
+        """大模型回复末尾低频追加的水印（约 5% 概率命中）；未命中返回空。
 
         单条独占一行，避免干扰正文阅读。
         """
-        if not self._promo_in_reply:
-            return ""
-        if random.randint(1, 100) > self._promo_reply_chance:
+        if random.randint(1, 100) > 5:
             return ""
         return f"\n\n💬 插件交流群：{self._PROMO_QQ_GROUP}"
 
