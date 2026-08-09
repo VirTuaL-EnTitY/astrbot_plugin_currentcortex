@@ -1,4 +1,5 @@
 import re
+import json
 import random
 import asyncio
 import time
@@ -29,7 +30,7 @@ from .media_parser import (
 )
 from .cross_group_memory import CrossGroupMemoryStore
 from .group_switch_store import GroupSwitchStore
-from astrbot.api.provider import ProviderRequest
+from astrbot.api.provider import ProviderRequest, LLMResponse
 from astrbot.core.agent.message import TextPart
 from astrbot.api.platform import MessageType
 from astrbot.api.event.filter import EventMessageType
@@ -1240,7 +1241,7 @@ _JM_CHAPTER_CURSOR_TTL = 30 * 60
     "astrbot_plugin_currentcortex",
     "Rcst20",
     "多功能 AstrBot 插件（CurrentCortex）—— Pixiv 随机图片 ·网易云点歌 ·JMComic 漫画 ·小红书/B站/抖音媒体解析 ·每日一言 ·天气 ·男娘 ·DG-LAB（郊狼） 设备管理 ·跨群聊记忆 ·按群聊开关。基于 LeiZ API。",
-    "1.5.7",
+    "1.5.8",
 )
 class CurrentCortexPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -1252,6 +1253,11 @@ class CurrentCortexPlugin(Star):
         self._image_proxy = str(config.get("image_proxy", "pixiv.bileizhen.top"))
         self._exclude_ai = bool(config.get("exclude_ai", False))
         self._request_timeout = int(config.get("request_timeout", 15))
+        # LLM 工具（function calling）总开关：装饰器在类加载时已注册工具，
+        # 此开关控制工具执行时是否放行；关闭时工具返回提示而不执行。
+        self._llm_tools_enable = bool(config.get("llm_tools_enable", False))
+        if self._llm_tools_enable:
+            logger.info("[LLMTools] 已启用 LLM 工具（图片/点歌/电击）")
 
         # JMComic 章节图片下发：单张压缩阈值 + 每命令分段大小
         # 单条合并转发节点过多 / payload 过大会被 QQ 服务端拒绝（retcode=1200），
@@ -1487,11 +1493,16 @@ class CurrentCortexPlugin(Star):
             config.get("reply_seg_split_symbols", "。！？!?~～…\n,，")
         )
         # 切分词（可多字符，空格分隔），如「喵 qwq owo」。在词的后面切分，词保留在段尾。
+        # 默认只含多字符颜文字词；单字符词（如 w）会误切英文单词、左括号（会破坏
+        # 括号配对，故默认不带，用户可按需自行增删。
         self._reply_seg_words = [
             w for w in str(
-                config.get("reply_seg_split_words", "喵 qwq owo awa ovo w （")
+                config.get("reply_seg_split_words", "喵 qwq owo awa ovo")
             ).split() if w
         ]
+        # punct 模式：短于此长度的段会被合并到前一段（纯标点段无条件合并）；
+        # 设为 0 可关闭合并。用于消除逗号切出的碎片和孤立标点段。
+        self._reply_seg_merge_threshold = max(0, int(config.get("reply_seg_merge_threshold", 4)))
         self._reply_seg_min_length = max(1, int(config.get("reply_seg_min_length", 15)))
         self._reply_seg_max_length = max(
             self._reply_seg_min_length + 1, int(config.get("reply_seg_max_length", 80))
@@ -1500,6 +1511,33 @@ class CurrentCortexPlugin(Star):
         self._reply_seg_delay_range = self._parse_delay_range(
             str(config.get("reply_seg_delay_range", "0.8,2.5"))
         )
+        # llm 模式：调用大模型做语义级分段。
+        # provider_id 留空则复用当前会话的模型；建议配专用的廉价快速模型以省时省钱。
+        self._reply_seg_llm_provider_id = str(
+            config.get("reply_seg_llm_provider_id", "")
+        ).strip()
+        # llm 模式：分段密度档位（low/medium/high），决定每段目标字数区间。
+        # low=每段长(~40-70字)、medium=适中(~20-45字)、high=每段短碎(~10-25字)。
+        # 档位会同时影响 prompt 引导和段数上限的推算。
+        self._reply_seg_llm_density = str(
+            config.get("reply_seg_llm_density", "medium")
+        ).strip().lower()
+        if self._reply_seg_llm_density not in self._REPLY_SEG_DENSITY_PROFILES:
+            self._reply_seg_llm_density = "medium"
+        # llm 模式：分段数量上限。用户可显式配置；留空(0或负)则由档位自动推算。
+        cfg_max_seg = int(config.get("reply_seg_llm_max_segments", 0) or 0)
+        if cfg_max_seg > 0:
+            self._reply_seg_llm_max_segments = cfg_max_seg
+        else:
+            self._reply_seg_llm_max_segments = self._REPLY_SEG_DENSITY_PROFILES[
+                self._reply_seg_llm_density
+            ]["max_segments"]
+        # llm 模式：原文短于此长度时不调用 LLM，直接整段发送（省钱省时间）。
+        self._reply_seg_llm_min_chars = max(0, int(config.get("reply_seg_llm_min_chars", 30)))
+        # llm 模式：单次分段调用超时（秒）。超时则降级规则分段，避免回复过慢。
+        self._reply_seg_llm_timeout = max(3, int(config.get("reply_seg_llm_timeout", 15)))
+        # llm 模式：分段输出 token 上限。分段结果是 JSON 数组，输出量小，限制可加速返回。
+        self._reply_seg_llm_max_tokens = max(64, int(config.get("reply_seg_llm_max_tokens", 512)))
         if self._reply_seg_enable:
             logger.info(
                 f"[ReplySeg] 已启用分段回复（mode={self._reply_seg_mode}, "
@@ -1733,6 +1771,328 @@ class CurrentCortexPlugin(Star):
         except Exception as e:
             logger.error(f"[CrossGroupMemory] 注入上下文失败: {e}")
 
+    # =================================================================== #
+    # LLM 工具（function calling）：把图片获取 / 点歌 / 电击控制注册为
+    # 大模型可调用的工具。装饰器在类加载时注册，运行时由 _llm_tools_enable
+    # 开关控制是否放行；媒体类工具直接 event.send，return str 给 LLM 总结。
+    # 业务逻辑全部复用现有服务方法，零重写。
+    # =================================================================== #
+
+    def _llm_tool_guard(self) -> Optional[str]:
+        """LLM 工具执行前的统一开关检查；返回提示字符串则拦截。"""
+        if not self._llm_tools_enable:
+            return "该工具已被管理员关闭（llm_tools_enable 未开启）"
+        return None
+
+    async def _llm_fetch_pixiv(
+        self, event: AstrMessageEvent, params: Dict[str, Any]
+    ) -> str:
+        """图片工具共用流程：构建参数 → 请求 API → 发送图片 → 返回说明。"""
+        if not self._api_client:
+            return "图片功能未配置（缺少 Pixiv API Key）"
+        try:
+            api_params = self._prepare_api_params(params)
+            result = await self._api_client.fetch_images(**api_params)
+            items = await self._process_response(result, params, event)
+            if not items:
+                return "未获取到图片"
+            sent = 0
+            for item in items:
+                try:
+                    await event.send(item)
+                    if isinstance(item, MessageEventResult) or hasattr(item, "chain"):
+                        sent += 1
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"[LLMTool] 发送图片段失败: {e}")
+            num = params.get("num", 1)
+            return f"已{'发送图片' if sent else '尝试发送'}（请求 {num} 张）"
+        except PixivAPIError as e:
+            return f"获取图片失败：{e}"
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"[LLMTool] 图片工具异常: {e}", exc_info=True)
+            return f"获取图片时出错：{e}"
+
+    @filter.llm_tool(name="get_pixiv_random")
+    async def llm_tool_pixiv_random(
+        self, event: AstrMessageEvent, num: int = 1, r18: int = -1
+    ):
+        """获取随机二次元插画图片并发送。当用户想看图、来张图、发个插画时调用。
+
+        Args:
+            num(number): 获取的图片数量，1-5，默认 1。不要超过 5 以免刷屏。
+            r18(number): 内容等级。0=全年龄（默认），1=仅 R18，2=混合。不确定时用 0。
+        """
+        hint = self._llm_tool_guard()
+        if hint:
+            return hint
+        n = max(1, min(5, int(num)))
+        level = self._default_r18 if r18 < 0 else int(r18)
+        params = {
+            "r18": level, "num": n,
+            "size": self._default_size, "excludeAI": self._exclude_ai,
+        }
+        return await self._llm_fetch_pixiv(event, params)
+
+    @filter.llm_tool(name="search_pixiv")
+    async def llm_tool_pixiv_search(
+        self, event: AstrMessageEvent, keyword: str, num: int = 1, r18: int = -1
+    ):
+        """按关键词搜索二次元插画图片并发送。当用户指定了主题/内容时调用，如「来张猫娘」「找点原神图」。
+
+        Args:
+            keyword(string): 搜索关键词，如「猫娘」「原神」「星空」。
+            num(number): 获取的图片数量，1-5，默认 1。
+            r18(number): 内容等级。0=全年龄（默认），1=仅 R18，2=混合。不确定时用 0。
+        """
+        hint = self._llm_tool_guard()
+        if hint:
+            return hint
+        if not keyword or not keyword.strip():
+            return "请提供搜索关键词"
+        n = max(1, min(5, int(num)))
+        level = self._default_r18 if r18 < 0 else int(r18)
+        params = {
+            "r18": level, "num": n, "keyword": keyword.strip(),
+            "size": self._default_size, "excludeAI": self._exclude_ai,
+        }
+        return await self._llm_fetch_pixiv(event, params)
+
+    @filter.llm_tool(name="get_pixiv_by_tags")
+    async def llm_tool_pixiv_tags(
+        self, event: AstrMessageEvent, tags: str, num: int = 1, r18: int = -1
+    ):
+        """按标签（多标签 AND 匹配）获取二次元插画图片并发送。适合用户给出多个标签的精确筛选，如「银发 红瞳」。
+
+        Args:
+            tags(string): 标签列表，逗号分隔，如「银发,红瞳」「catgirl,kimono」。多标签为同时满足（AND）。
+            num(number): 获取的图片数量，1-5，默认 1。
+            r18(number): 内容等级。0=全年龄（默认），1=仅 R18，2=混合。不确定时用 0。
+        """
+        hint = self._llm_tool_guard()
+        if hint:
+            return hint
+        tag_list = [t.strip() for t in (tags or "").split(",") if t.strip()]
+        if not tag_list:
+            return "请提供至少一个标签"
+        n = max(1, min(5, int(num)))
+        level = self._default_r18 if r18 < 0 else int(r18)
+        params = {
+            "r18": level, "num": n, "tag": tag_list,
+            "size": self._default_size, "excludeAI": self._exclude_ai,
+        }
+        return await self._llm_fetch_pixiv(event, params)
+
+    @filter.llm_tool(name="get_femboy_image")
+    async def llm_tool_femboy(self, event: AstrMessageEvent):
+        """获取一张随机男娘（femboy）图片并发送。当用户要求看男娘、伪娘、femboy 图片时调用。
+
+        Args:
+        """
+        hint = self._llm_tool_guard()
+        if hint:
+            return hint
+        if not self._femboy_client:
+            return "男娘图片功能未配置（缺少 femboy API Key）"
+        try:
+            result = await self._femboy_client.fetch_femboy_image()
+            items = await self._process_femboy_response(result, event)
+            if not items:
+                return "未获取到男娘图片"
+            for item in items:
+                try:
+                    await event.send(item)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"[LLMTool] 发送男娘图片段失败: {e}")
+            return "已发送一张男娘图片"
+        except FemboyAPIError as e:
+            return f"获取男娘图片失败：{e}"
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"[LLMTool] 男娘工具异常: {e}", exc_info=True)
+            return f"获取男娘图片时出错：{e}"
+
+    @filter.llm_tool(name="play_song")
+    async def llm_tool_play_song(self, event: AstrMessageEvent, song_name: str):
+        """根据歌曲名搜索并点歌，发送语音条。当用户想听歌、来一首、播放音乐时调用。
+
+        Args:
+            song_name(string): 歌曲名称，可包含歌手名，如「晴天」「周杰伦 晴天」。
+        """
+        hint = self._llm_tool_guard()
+        if hint:
+            return hint
+        if not self._netease_client and not self._kugou_client:
+            return "音乐功能未配置（缺少网易云或酷狗 API Key）"
+        query = (song_name or "").strip()
+        if not query:
+            return "请提供歌曲名"
+        slot_hint = self._acquire_music_slot(event)
+        if slot_hint:
+            return slot_hint
+        try:
+            song_data, used_source = await self._search_and_get("auto", query)
+            items = await self._format_song_response(
+                song_data, event, direct_mode=True
+            )
+            for item in items:
+                try:
+                    await event.send(item)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"[LLMTool] 发送音乐段失败: {e}")
+            src_name = {"netease": "网易云", "kugou": "酷狗"}.get(used_source, used_source)
+            name = song_data.get("name", query) if isinstance(song_data, dict) else query
+            return f"已点播「{name}」（音源：{src_name}）"
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[LLMTool] 点歌失败: {e}")
+            return f"点歌失败：{e}"
+        finally:
+            self._release_music_slot(event)
+
+    async def _llm_dglab_dispatch(
+        self, event: AstrMessageEvent, command: str, args: str
+    ) -> str:
+        """电击工具共用流程：拼接 args → 复用 _dispatch_command（含权限校验/设备解析）。"""
+        hint = self._llm_tool_guard()
+        if hint:
+            return hint
+        try:
+            # 确保连接池/WebUI 已启动（与 dglab_command 一致）
+            if not getattr(self, "_pool_started", False):
+                await self._connection_pool.start()
+                if self._dglab_webui:
+                    await self._dglab_webui.start()
+                self._pool_started = True
+            user_id = str(event.get_sender_id())
+            user_name = event.get_sender_name()
+            result = await self._dglab_handler._dispatch_command(
+                command, args, user_id, user_name, event
+            )
+            if isinstance(result, list):
+                # _cmd_bind 会返回 [文本, 图片]；逐项发送
+                for item in result:
+                    try:
+                        await event.send(item)
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning(f"[LLMTool] 发送 dglab 结果段失败: {e}")
+                return "已发送设备绑定二维码及相关信息"
+            return str(result) if result is not None else "操作完成"
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"[LLMTool] 电击工具异常: {e}", exc_info=True)
+            return f"操作失败：{e}"
+
+    @filter.llm_tool(name="dglab_shock")
+    async def llm_tool_dglab_shock(
+        self, event: AstrMessageEvent, channel: str,
+        strength: int = 20, wave: str = "pulse",
+        duration: int = 5, device_index: int = 0,
+    ):
+        """对 DG-LAB 电击设备开始电击（发送指定强度的波形输出）。仅在用户明确要求电击/开火/放电时调用。
+
+        Args:
+            channel(string): 通道，A 或 B。
+            strength(number): 强度值，0-200，默认 20。请从低值开始。
+            wave(string): 波形预设名，默认 pulse。可选：breathe/pulse/wave/tap/heartbeat/needle/throb/chaos。
+            duration(number): 持续秒数，默认 5。
+            device_index(number): 设备序号，单设备可省略（默认）；多设备时指定，如 2。
+        """
+        ch = (channel or "A").strip().upper()
+        parts = []
+        if device_index and int(device_index) > 0:
+            parts.append(str(int(device_index)))
+        parts.append(ch)
+        parts.append(str(max(0, min(200, int(strength)))))
+        parts.append((wave or "pulse").strip().lower())
+        parts.append(str(max(1, int(duration))))
+        return await self._llm_dglab_dispatch(event, "shock", " ".join(parts))
+
+    @filter.llm_tool(name="dglab_strength")
+    async def llm_tool_dglab_strength(
+        self, event: AstrMessageEvent, channel: str, value: int, device_index: int = 0
+    ):
+        """设置 DG-LAB 电击设备的通道强度（绝对值）。当用户说「强度调到X」「设为X」时调用。
+
+        Args:
+            channel(string): 通道，A 或 B。
+            value(number): 目标强度值，0-200。
+            device_index(number): 设备序号，单设备可省略；多设备时指定。
+        """
+        ch = (channel or "A").strip().upper()
+        parts = []
+        if device_index and int(device_index) > 0:
+            parts.append(str(int(device_index)))
+        parts.append(ch)
+        parts.append(str(max(0, min(200, int(value)))))
+        return await self._llm_dglab_dispatch(event, "strength", " ".join(parts))
+
+    @filter.llm_tool(name="dglab_strength_adjust")
+    async def llm_tool_dglab_strength_adjust(
+        self, event: AstrMessageEvent, channel: str, direction: str,
+        step: int = 5, device_index: int = 0,
+    ):
+        """增加或减少 DG-LAB 通道强度（相对调节）。当用户说「调大一点」「降低一些」时调用。
+
+        Args:
+            channel(string): 通道，A 或 B。
+            direction(string): 调节方向，up=增加 / down=减少。
+            step(number): 步进值，默认 5。
+            device_index(number): 设备序号，单设备可省略；多设备时指定。
+        """
+        ch = (channel or "A").strip().upper()
+        cmd = "up" if (direction or "up").strip().lower().startswith("u") else "down"
+        parts = []
+        if device_index and int(device_index) > 0:
+            parts.append(str(int(device_index)))
+        parts.append(ch)
+        parts.append(str(max(1, int(step))))
+        return await self._llm_dglab_dispatch(event, cmd, " ".join(parts))
+
+    @filter.llm_tool(name="dglab_pulse")
+    async def llm_tool_dglab_pulse(
+        self, event: AstrMessageEvent, channel: str, wave: str,
+        duration: int = 5, device_index: int = 0,
+    ):
+        """对 DG-LAB 通道发送波形（不改变强度，仅输出波形图案）。当用户要求特定波形/模式时调用。
+
+        Args:
+            channel(string): 通道，A 或 B。
+            wave(string): 波形预设名：breathe/pulse/wave/tap/heartbeat/needle/throb/chaos。
+            duration(number): 持续秒数，默认 5。
+            device_index(number): 设备序号，单设备可省略；多设备时指定。
+        """
+        ch = (channel or "A").strip().upper()
+        parts = []
+        if device_index and int(device_index) > 0:
+            parts.append(str(int(device_index)))
+        parts.append(ch)
+        parts.append((wave or "pulse").strip().lower())
+        parts.append(str(max(1, int(duration))))
+        return await self._llm_dglab_dispatch(event, "pulse", " ".join(parts))
+
+    @filter.llm_tool(name="dglab_stop")
+    async def llm_tool_dglab_stop(
+        self, event: AstrMessageEvent, channel: str = "", device_index: int = 0
+    ):
+        """停止 DG-LAB 电击设备的输出。当用户要求停止/停下/关掉电击时调用。不指定通道则停止该设备全部输出。
+
+        Args:
+            channel(string): 通道，A 或 B。留空则停止该设备所有通道。
+            device_index(number): 设备序号，单设备可省略；多设备时指定。
+        """
+        parts = []
+        if device_index and int(device_index) > 0:
+            parts.append(str(int(device_index)))
+        ch = (channel or "").strip().upper()
+        if ch in ("A", "B"):
+            parts.append(ch)
+        return await self._llm_dglab_dispatch(event, "stop", " ".join(parts))
+
+    @filter.llm_tool(name="dglab_status")
+    async def llm_tool_dglab_status(self, event: AstrMessageEvent):
+        """查询 DG-LAB 电击设备的绑定与连接状态。当用户想了解设备情况、是否连接、当前状态时调用。
+
+        Args:
+        """
+        return await self._llm_dglab_dispatch(event, "status", "")
+
     @filter.on_decorating_result()
     async def on_reply_seg_decorating(self, event: AstrMessageEvent):
         """分段回复：在发送前把回复文本拆成多条消息分次发送（模拟逐条回复）。
@@ -1756,7 +2116,12 @@ class CurrentCortexPlugin(Star):
             if not raw_text:
                 return
 
-            segments = self._segment_text(raw_text)
+            # llm 模式：先尝试大模型语义分段；太短、失败或只切出 1 段则降级规则分段。
+            segments: Optional[List[str]] = None
+            if self._reply_seg_mode == "llm":
+                segments = await self._segment_by_llm(raw_text, event)
+            if not segments:
+                segments = self._segment_text(raw_text)
             if len(segments) <= 1:
                 return  # 无需分段，交回框架正常发送
 
@@ -1775,6 +2140,179 @@ class CurrentCortexPlugin(Star):
         except Exception as e:
             logger.error(f"[ReplySeg] 分段异常，已跳过（回复原文）: {e}")
 
+    # llm 模式：分段密度档位映射。每档定义「每段目标字数区间」+「默认段数上限」
+    # +「prompt 引导语」。low=每段长(信息密度大)、medium=适中、high=每段短(更碎更活泼)。
+    _REPLY_SEG_DENSITY_PROFILES = {
+        "low": {
+            "label": "低（每段较长）",
+            "target_chars": (40, 70),
+            "max_segments": 3,
+            "guidance": "每段尽量长一些、信息量大一些，把相关内容合并成较完整的大段，少切几段。",
+        },
+        "medium": {
+            "label": "中（适中，推荐）",
+            "target_chars": (20, 45),
+            "max_segments": 5,
+            "guidance": "每段保持适中长度，像真人自然的逐句节奏。",
+        },
+        "high": {
+            "label": "高（每段较短）",
+            "target_chars": (10, 25),
+            "max_segments": 8,
+            "guidance": "每段尽量短小精悍，可以切得更细、更活泼，像刷屏式聊天。",
+        },
+    }
+
+    # llm 模式：语义级分段的系统提示词模板。要求返回纯 JSON 字符串数组。
+    # {max_segments}/{target_min}/{target_max}/{density_guidance} 由 _segment_by_llm 注入。
+    # 精简提示词以减少输入 token、加速推理；核心约束保留，措辞压缩。
+    _REPLY_SEG_LLM_SYSTEM_PROMPT = (
+        "把输入文本按语义完整性拆成 2~{max_segments} 条逐条发送的消息。"
+        "{density_guidance}每段约{target_min}~{target_max}字。\n"
+        "要求：只在语义停顿处断开；逗号是句内停顿不要切；"
+        "颜文字跟在所属句尾；原文一字不改，只切不增删。"
+        "短文无法拆分时返回单段。\n"
+        "只输出JSON字符串数组，无任何解释或markdown。"
+        '示例：["第一段","第二段"]'
+    )
+
+    async def _segment_by_llm(
+        self, text: str, event: AstrMessageEvent
+    ) -> Optional[List[str]]:
+        """调用大模型做语义级分段，返回段落列表；不可用/失败/校验不通过时返回 None。
+
+        失败情形（均返回 None，由调用方降级到规则分段）：
+        - 原文长度 < _reply_seg_llm_min_chars（太短不值得调用）
+        - 无可用 provider（未配置且取不到当前会话模型）
+        - 调用异常或超时
+        - 返回内容不是合法 JSON 数组 / 解析后非字符串元素
+        - 合并后总字数与原文偏差过大（>10%，判定模型改写了原文）
+        """
+        if len(text) < self._reply_seg_llm_min_chars:
+            return None
+
+        provider_id = self._reply_seg_llm_provider_id
+        if not provider_id:
+            try:
+                provider_id = await self.context.get_current_chat_provider_id(
+                    umo=event.unified_msg_origin
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"[ReplySeg] 获取当前 provider 失败: {e}")
+                provider_id = ""
+        if not provider_id:
+            logger.warning("[ReplySeg] llm 模式无可用 provider，降级规则分段")
+            return None
+
+        profile = self._REPLY_SEG_DENSITY_PROFILES[self._reply_seg_llm_density]
+        tmin, tmax = profile["target_chars"]
+        system_prompt = self._REPLY_SEG_LLM_SYSTEM_PROMPT.format(
+            max_segments=self._reply_seg_llm_max_segments,
+            target_min=tmin,
+            target_max=tmax,
+            density_guidance=profile["guidance"],
+        )
+        # 性能优化：限制输出 token + 只请求一次（失败即降级）+ 超时控制。
+        # 分段结果是一个短 JSON 数组，不需要长输出，限制 max_tokens 能显著加速返回。
+        try:
+            resp: Optional[LLMResponse] = await asyncio.wait_for(
+                self.context.llm_generate(
+                    chat_provider_id=provider_id,
+                    system_prompt=system_prompt,
+                    prompt=text,
+                    max_tokens=self._reply_seg_llm_max_tokens,
+                    request_max_retries=1,
+                ),
+                timeout=self._reply_seg_llm_timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"[ReplySeg] llm 分段超时（>{self._reply_seg_llm_timeout}s），降级规则分段"
+            )
+            return None
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[ReplySeg] llm 分段调用异常，降级规则分段: {e}")
+            return None
+        if not resp or not resp.completion_text:
+            logger.warning("[ReplySeg] llm 分段返回空，降级规则分段")
+            return None
+
+        segments = self._parse_llm_segments(resp.completion_text)
+        if not segments:
+            logger.warning("[ReplySeg] llm 分段结果解析失败，降级规则分段")
+            return None
+
+        # 段数超限：把超出部分合并到最后一段，避免模型切成几十段。
+        segments = self._cap_llm_segments(segments, self._reply_seg_llm_max_segments)
+
+        # 字数校验：合并后应约等于原文；偏差过大说明模型改写了内容，不可信。
+        joined = "".join(segments)
+        if not self._text_close_enough(joined, text):
+            logger.warning(
+                f"[ReplySeg] llm 分段合并后字数({len(joined)})与原文({len(text)})"
+                f"偏差过大，降级规则分段"
+            )
+            return None
+        return segments
+
+    @staticmethod
+    def _parse_llm_segments(raw: str) -> List[str]:
+        """从 LLM 返回文本中解析出字符串列表。
+
+        容错：去掉 markdown 代码块围栏（```json ... ```）、首尾多余空白；
+        尝试截取首个 [ 到末尾 ] 的片段再解析；最终只保留非空字符串元素。
+        """
+        if not raw:
+            return []
+        text = raw.strip()
+        # 去掉 markdown 代码块围栏
+        if text.startswith("```"):
+            text = re.sub(r"^```[a-zA-Z]*\s*", "", text)
+            text = re.sub(r"\s*```$", "", text).strip()
+        # 直接解析
+        try:
+            data = json.loads(text)
+        except (json.JSONDecodeError, ValueError):
+            # 截取首个 [ 到最后一个 ] 之间再试一次
+            start = text.find("[")
+            end = text.rfind("]")
+            if start == -1 or end == -1 or end <= start:
+                return []
+            try:
+                data = json.loads(text[start: end + 1])
+            except (json.JSONDecodeError, ValueError):
+                return []
+        if not isinstance(data, list):
+            return []
+        segments: List[str] = []
+        for item in data:
+            if isinstance(item, str):
+                s = item.strip()
+                if s:
+                    segments.append(s)
+        return segments
+
+    @staticmethod
+    def _cap_llm_segments(segments: List[str], max_segments: int) -> List[str]:
+        """段数超过上限时，把多出的段落合并到末段，返回裁剪后的列表。"""
+        if max_segments <= 1 or len(segments) <= max_segments:
+            return segments
+        head = segments[:max_segments - 1]
+        tail = "".join(segments[max_segments - 1:])
+        head.append(tail)
+        return head
+
+    @staticmethod
+    def _text_close_enough(a: str, b: str) -> bool:
+        """判断两个文本字数是否足够接近（去除空白后比较，允许 10% 偏差）。"""
+        ca = len(re.sub(r"\s", "", a))
+        cb = len(re.sub(r"\s", "", b))
+        if cb == 0:
+            return ca == 0
+        # 偏差比例 = |差| / max(原文, 合并)
+        diff_ratio = abs(ca - cb) / max(cb, ca)
+        return diff_ratio <= 0.10
+
     def _segment_text(self, text: str) -> List[str]:
         """按 reply_seg_mode 分派到对应分段算法，返回非空段落列表。"""
         symbols = self._reply_seg_symbols or "。！？!?~～…\n,，"
@@ -1784,7 +2322,9 @@ class CurrentCortexPlugin(Star):
                 text, self._reply_seg_min_length, self._reply_seg_max_length,
                 symbols, words,
             )
-        return self._split_by_punct(text, symbols, words)
+        return self._split_by_punct(
+            text, symbols, words, self._reply_seg_merge_threshold,
+        )
 
     @staticmethod
     def _build_sep_pattern(symbols: str, words: List[str]) -> Optional[re.Pattern]:
@@ -1807,11 +2347,14 @@ class CurrentCortexPlugin(Star):
             return None
         return re.compile("(" + "|".join(alts) + ")")
 
-    def _split_by_punct(self, text: str, symbols: str, words: List[str]) -> List[str]:
+    def _split_by_punct(self, text: str, symbols: str, words: List[str],
+                        merge_threshold: int = 4) -> List[str]:
         """按标点/词切分：在任一切分点处断开，分隔符保留在段尾；丢弃空段。
 
-        支持单字符符号（。！？, 等）和多字符词（喵 qwq owo 等）。标点模式已自然
-        分句，不做「末尾过短合并」——否则会把有效短句错误并回上一段。
+        支持单字符符号（。！？, 等）和多字符词（喵 qwq owo 等）。切完后调用
+        _merge_short_segments 把过短段和纯标点段（如孤立的「。」）并回前一段，
+        消除逗号切出的碎片和孤立标点段；有效短句（如「好的。」）作为首段不受影响。
+        merge_threshold <= 0 时关闭合并。
         """
         if not text:
             return []
@@ -1829,7 +2372,29 @@ class CurrentCortexPlugin(Star):
             if piece:
                 segments.append(piece)
             i += 2
+        if merge_threshold > 0:
+            segments = self._merge_short_segments(segments, merge_threshold)
         return segments
+
+    @staticmethod
+    def _merge_short_segments(segments: List[str], threshold: int) -> List[str]:
+        """把过短段和纯标点段并回前一段，消除碎片。
+
+        - 纯标点段（全部由常见标点/空白组成，如孤立的「。」或「，」）无条件合并；
+        - 长度 < threshold 的段也合并；
+        - 仅当存在前一段时才合并（首段直接保留，避免丢内容）。
+        """
+        if len(segments) <= 1:
+            return segments
+        punct_chars = set("。！？!?~～…\n,，、；;：: 　\t")
+        merged: List[str] = []
+        for seg in segments:
+            is_punct_only = all(c in punct_chars for c in seg)
+            if merged and (is_punct_only or len(seg) < threshold):
+                merged[-1] += seg
+            else:
+                merged.append(seg)
+        return merged
 
     @staticmethod
     def _find_cut_after(remaining: str, start: int, end: int, symbols: str,
@@ -2407,8 +2972,15 @@ class CurrentCortexPlugin(Star):
                             f"⚠️ 原始文件 {src_mb:.1f}MB 较大，转码失败（未安装 ffmpeg？），"
                             f"仍尝试发送原文件，可能因体积过大失败；建议改用 /音乐 直接 获取语音条"
                         )
-                yield event.chain_result([Comp.File(name=final_name, file=final_path)])
-                logger.info(f"[Music] 已添加音乐文件: {final_name} -> {final_path}")
+                # 优先走 OneBot 本地上传，绕过 Comp.File → callback_api_base HTTP 回调。
+                # 实测 callback 配成 webhook 路径时，NapCat 会报「下载文件失败」，表现为
+                # /音乐 文件 偶发/常态失效（插件侧其实已下载成功）。
+                sent = await self._send_music_file(event, final_path, final_name)
+                if not sent:
+                    yield event.plain_result(
+                        f"❌ 发送音乐文件失败：{final_name}\n"
+                        f"💡 可改用 /音乐 直接 获取语音条，或稍后重试"
+                    )
                 return
 
             # direct模式：仅返回语音条，不附带额外信息
@@ -2786,55 +3358,190 @@ class CurrentCortexPlugin(Star):
         safe_name = re.sub(r"[^\w\-.]", "_", name)[:50] or "music"
         return f"{safe_name}{os.path.splitext(source_path)[1]}"
 
+    @staticmethod
+    def _resolve_onebot_call_action(event: AstrMessageEvent):
+        """从 event 上解析 OneBot call_action 可调用对象；不可用则返回 None。"""
+        bot = getattr(event, "bot", None)
+        if bot is None:
+            return None
+        call = getattr(bot, "call_action", None)
+        if callable(call):
+            return call
+        api = getattr(bot, "api", None)
+        call = getattr(api, "call_action", None) if api is not None else None
+        return call if callable(call) else None
+
+    async def _send_music_file(
+        self, event: AstrMessageEvent, file_path: str, file_name: str
+    ) -> bool:
+        """发送本地音乐文件。
+
+        优先使用 OneBot ``upload_group_file`` / ``upload_private_file`` 直接上传本地路径，
+        避免 ``Comp.File`` 经 ``callback_api_base`` 转成 HTTP 回调后被 NapCat 二次下载失败
+        （日志常见「下载文件失败」，而插件侧其实已成功落盘）。
+
+        OneBot 不可用时再回退 ``Comp.File`` 消息段。
+        """
+        if not file_path or not os.path.isfile(file_path):
+            logger.warning(f"[Music] 发送失败：本地文件不存在 {file_path}")
+            return False
+        if os.path.getsize(file_path) <= 0:
+            logger.warning(f"[Music] 发送失败：本地文件为空 {file_path}")
+            return False
+
+        abs_path = os.path.abspath(file_path)
+        call = self._resolve_onebot_call_action(event)
+        if call is not None:
+            try:
+                group_id = ""
+                try:
+                    group_id = str(event.get_group_id() or "").strip()
+                except Exception:
+                    group_id = ""
+                if group_id and group_id.isdigit():
+                    await call(
+                        "upload_group_file",
+                        group_id=int(group_id),
+                        file=abs_path,
+                        name=file_name,
+                    )
+                    logger.info(
+                        f"[Music] 已通过 upload_group_file 发送: {file_name} -> {abs_path}"
+                    )
+                    return True
+
+                sender_id = ""
+                try:
+                    sender_id = str(event.get_sender_id() or "").strip()
+                except Exception:
+                    sender_id = ""
+                if sender_id and sender_id.isdigit():
+                    await call(
+                        "upload_private_file",
+                        user_id=int(sender_id),
+                        file=abs_path,
+                        name=file_name,
+                    )
+                    logger.info(
+                        f"[Music] 已通过 upload_private_file 发送: {file_name} -> {abs_path}"
+                    )
+                    return True
+                logger.warning(
+                    "[Music] OneBot 可用但无法解析 group_id/user_id，回退 Comp.File"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"[Music] OneBot 本地上传失败，回退 Comp.File: {e}",
+                    exc_info=True,
+                )
+
+        # 回退：通用 File 消息段（依赖平台适配器；aiocqhttp 下可能再走 callback）
+        try:
+            await event.send(
+                event.chain_result([Comp.File(name=file_name, file=abs_path)])
+            )
+            logger.info(f"[Music] 已通过 Comp.File 发送: {file_name} -> {abs_path}")
+            return True
+        except Exception as e:
+            logger.warning(f"[Music] Comp.File 发送失败: {e}", exc_info=True)
+            return False
+
     async def _download_source_audio_to_temp(
         self, url: str, name: str, file_type: str = ""
     ) -> Optional[str]:
-        """原样下载音频文件，供文件模式作为附件发送。"""
+        """原样下载音频文件，供文件模式作为附件发送。
+
+        大体积 flac 下载可能超过 30s；对超时/网络错误做有限重试，并拒绝空文件。
+        """
         if not url:
             logger.warning("[Music] 原始文件下载失败：没有播放链接")
             return None
 
-        temp_path = None
-        downloaded = False
-        try:
-            temp_dir = os.path.join(tempfile.gettempdir(), "astrbot_music")
-            os.makedirs(temp_dir, exist_ok=True)
-            self._cleanup_old_audio_files(temp_dir)
+        temp_dir = os.path.join(tempfile.gettempdir(), "astrbot_music")
+        os.makedirs(temp_dir, exist_ok=True)
+        self._cleanup_old_audio_files(temp_dir)
 
-            safe_name = re.sub(r"[^\w\-.]", "_", name)[:50] or "music"
+        safe_name = re.sub(r"[^\w\-.]", "_", name)[:50] or "music"
+        extension = self._audio_extension(file_type, url)
+        headers = {"User-Agent": "AstrBot-Music-Plugin/1.0"}
+        if self._leiz_api_key:
+            headers["x-api-key"] = self._leiz_api_key
+
+        # 单次最长 90s（大 flac 常见 15~40MB）；共 3 次，指数退避。
+        max_attempts = 3
+        backoff_base = 0.8
+        last_error: Optional[str] = None
+
+        for attempt in range(1, max_attempts + 1):
             request_id = uuid.uuid4().hex[:12]
-            extension = self._audio_extension(file_type, url)
             temp_path = os.path.join(
                 temp_dir, f"{safe_name}_{request_id}_source{extension}"
             )
+            downloaded = False
+            try:
+                timeout = aiohttp.ClientTimeout(total=90, sock_connect=15, sock_read=60)
+                async with aiohttp.ClientSession(
+                    timeout=timeout, headers=headers
+                ) as session:
+                    async with session.get(url) as resp:
+                        if resp.status != 200:
+                            last_error = f"HTTP {resp.status}"
+                            logger.warning(
+                                f"[Music] 下载原始音乐失败: {last_error} "
+                                f"(attempt {attempt}/{max_attempts})"
+                            )
+                            # 4xx 业务错误不重试（除 408/429）
+                            if resp.status < 500 and resp.status not in (408, 429):
+                                return None
+                        else:
+                            with open(temp_path, "wb") as audio_file:
+                                async for chunk in resp.content.iter_chunked(64 * 1024):
+                                    if chunk:
+                                        audio_file.write(chunk)
+                            downloaded = True
 
-            timeout = aiohttp.ClientTimeout(total=30)
-            headers = {"User-Agent": "AstrBot-Music-Plugin/1.0"}
-            if self._leiz_api_key:
-                headers["x-api-key"] = self._leiz_api_key
-            async with aiohttp.ClientSession(
-                timeout=timeout, headers=headers
-            ) as session:
-                async with session.get(url) as resp:
-                    if resp.status != 200:
-                        logger.warning(f"[Music] 下载原始音乐失败: HTTP {resp.status}")
-                        return None
-                    with open(temp_path, "wb") as audio_file:
-                        async for chunk in resp.content.iter_chunked(8192):
-                            audio_file.write(chunk)
-                    downloaded = True
-
-            logger.info(
-                f"[Music] 原始音频已下载（未转码）: {temp_path} "
-                f"({os.path.getsize(temp_path) / (1024 * 1024):.2f}MB)"
-            )
-            return temp_path
-        except Exception as e:
-            logger.warning(f"[Music] 下载原始音乐异常: {e}")
-            return None
-        finally:
-            if temp_path and not downloaded:
+                if downloaded:
+                    size = os.path.getsize(temp_path)
+                    if size <= 0:
+                        last_error = "空文件"
+                        logger.warning(
+                            f"[Music] 下载原始音乐得到空文件 "
+                            f"(attempt {attempt}/{max_attempts})"
+                        )
+                        self._remove_file(temp_path)
+                    else:
+                        logger.info(
+                            f"[Music] 原始音频已下载（未转码）: {temp_path} "
+                            f"({size / (1024 * 1024):.2f}MB)"
+                        )
+                        return temp_path
+            except asyncio.TimeoutError:
+                last_error = "超时"
+                logger.warning(
+                    f"[Music] 下载原始音乐超时 (attempt {attempt}/{max_attempts}): {name}"
+                )
+            except aiohttp.ClientError as e:
+                last_error = f"网络错误: {e}"
+                logger.warning(
+                    f"[Music] 下载原始音乐网络错误 "
+                    f"(attempt {attempt}/{max_attempts}): {e}"
+                )
+            except Exception as e:
+                last_error = f"{type(e).__name__}: {e}"
+                logger.warning(f"[Music] 下载原始音乐异常: {e}")
                 self._remove_file(temp_path)
+                return None
+            finally:
+                if not downloaded:
+                    self._remove_file(temp_path)
+
+            if attempt < max_attempts:
+                await asyncio.sleep(backoff_base * (2 ** (attempt - 1)))
+
+        logger.warning(
+            f"[Music] 下载原始音乐最终失败（{max_attempts} 次）: {name}; last={last_error}"
+        )
+        return None
 
     async def _download_audio_to_temp(self, url: str, name: str) -> Optional[str]:
         """下载音频文件到临时目录，并压缩为语音条专用低码率 MP3。

@@ -129,6 +129,7 @@ _dev_webui.py
 test_*.py
 !test_music_audio.py
 !test_jm_chapter.py
+!test_reply_seg.py
 
 # ============================================
 # 工具目录（本地 IDE / CLI 配置）

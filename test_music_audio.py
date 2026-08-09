@@ -39,12 +39,44 @@ class MockLogger:
 logger = MockLogger()
 astrbot = types.ModuleType("astrbot")
 astrbot_api = types.ModuleType("astrbot.api")
+# 标记为 package，避免后续子模块导入时报 “not a package”
+astrbot_api.__path__ = []
 astrbot_api.logger = logger
 astrbot_api.AstrBotConfig = dict
 astrbot_event = types.ModuleType("astrbot.api.event")
-astrbot_event.filter = types.SimpleNamespace(command=lambda *args, **kwargs: lambda f: f)
+def _noop_decorator(*args, **kwargs):
+    def _wrap(f):
+        return f
+
+    return _wrap
+
+
+_FakeEventMessageType = types.SimpleNamespace(ALL="ALL")
+_FakePlatformAdapterType = types.SimpleNamespace(ALL="ALL")
+astrbot_event.filter = types.SimpleNamespace(
+    command=_noop_decorator,
+    event_message_type=_noop_decorator,
+    platform_adapter_type=_noop_decorator,
+    on_llm_request=_noop_decorator,
+    on_decorating_result=_noop_decorator,
+    llm_tool=_noop_decorator,
+    EventMessageType=_FakeEventMessageType,
+    PlatformAdapterType=_FakePlatformAdapterType,
+)
 astrbot_event.AstrMessageEvent = object
 astrbot_event.MessageEventResult = object
+astrbot_event.MessageChain = type(
+    "MessageChain", (), {"message": lambda self, *a, **k: self}
+)
+astrbot_event_filter = types.ModuleType("astrbot.api.event.filter")
+astrbot_event_filter.EventMessageType = _FakeEventMessageType
+astrbot_event_filter.PlatformAdapterType = _FakePlatformAdapterType
+astrbot_event_filter.command = _noop_decorator
+astrbot_event_filter.event_message_type = _noop_decorator
+astrbot_event_filter.platform_adapter_type = _noop_decorator
+astrbot_event_filter.on_llm_request = _noop_decorator
+astrbot_event_filter.on_decorating_result = _noop_decorator
+astrbot_event_filter.llm_tool = _noop_decorator
 astrbot_star = types.ModuleType("astrbot.api.star")
 astrbot_star.Context = object
 astrbot_star.Star = object
@@ -54,16 +86,38 @@ astrbot_components.Record = type(
     "Record", (), {"fromFileSystem": staticmethod(lambda path: {"file": path})}
 )
 astrbot_components.File = type(
-    "File", (), {"__init__": lambda self, name, file: setattr(self, "name", name) or setattr(self, "file", file)}
+    "File",
+    (),
+    {
+        "__init__": lambda self, name, file: setattr(self, "name", name)
+        or setattr(self, "file", file)
+    },
 )
+astrbot_provider = types.ModuleType("astrbot.api.provider")
+astrbot_provider.ProviderRequest = object
+astrbot_provider.LLMResponse = object
+astrbot_platform = types.ModuleType("astrbot.api.platform")
+astrbot_platform.MessageType = object
+astrbot_core = types.ModuleType("astrbot.core")
+astrbot_core.__path__ = []
+astrbot_core_agent = types.ModuleType("astrbot.core.agent")
+astrbot_core_agent.__path__ = []
+astrbot_core_agent_message = types.ModuleType("astrbot.core.agent.message")
+astrbot_core_agent_message.TextPart = object
 
 sys.modules.update(
     {
         "astrbot": astrbot,
         "astrbot.api": astrbot_api,
         "astrbot.api.event": astrbot_event,
+        "astrbot.api.event.filter": astrbot_event_filter,
         "astrbot.api.star": astrbot_star,
         "astrbot.api.message_components": astrbot_components,
+        "astrbot.api.provider": astrbot_provider,
+        "astrbot.api.platform": astrbot_platform,
+        "astrbot.core": astrbot_core,
+        "astrbot.core.agent": astrbot_core_agent,
+        "astrbot.core.agent.message": astrbot_core_agent_message,
     }
 )
 
@@ -84,6 +138,8 @@ for module_name, attributes in {
         "MediaParserError": Exception,
         "URLExtractor": object,
     },
+    "cross_group_memory": {"CrossGroupMemoryStore": object},
+    "group_switch_store": {"GroupSwitchStore": object},
 }.items():
     module = types.ModuleType(f"astrbot_plugin_pixiv.{module_name}")
     for name, value in attributes.items():
@@ -97,6 +153,10 @@ class TestPlugin:
     _compress_for_voice = main.CurrentCortexPlugin._compress_for_voice
     _download_source_audio_to_temp = main.CurrentCortexPlugin._download_source_audio_to_temp
     _download_audio_to_temp = main.CurrentCortexPlugin._download_audio_to_temp
+    _send_music_file = main.CurrentCortexPlugin._send_music_file
+    _resolve_onebot_call_action = staticmethod(
+        main.CurrentCortexPlugin._resolve_onebot_call_action
+    )
     _audio_extension = staticmethod(main.CurrentCortexPlugin._audio_extension)
     _build_audio_filename = classmethod(main.CurrentCortexPlugin._build_audio_filename.__func__)
     _cleanup_old_audio_files = staticmethod(main.CurrentCortexPlugin._cleanup_old_audio_files)
@@ -250,6 +310,139 @@ def test_play_song_command_parsing():
     assert plugin._parse_play_song_params("音乐 孤勇者") == "音乐 孤勇者"
 
 
+class _FakeEvent:
+    def __init__(self, group_id="", sender_id="", bot=None):
+        self._group_id = group_id
+        self._sender_id = sender_id
+        self.bot = bot
+        self.sent = []
+
+    def get_group_id(self):
+        return self._group_id
+
+    def get_sender_id(self):
+        return self._sender_id
+
+    def chain_result(self, chain):
+        return {"chain": chain}
+
+    async def send(self, message):
+        self.sent.append(message)
+
+
+class _FakeBot:
+    def __init__(self):
+        self.calls = []
+
+    async def call_action(self, action, **kwargs):
+        self.calls.append((action, kwargs))
+
+
+async def test_send_music_file_prefers_onebot_group_upload(temp_dir: Path):
+    source = temp_dir / "song.flac"
+    source.write_bytes(b"flac-bytes")
+    bot = _FakeBot()
+    event = _FakeEvent(group_id="123456", sender_id="999", bot=bot)
+
+    ok = await TestPlugin()._send_music_file(event, str(source), "song.flac")
+
+    assert ok is True
+    assert bot.calls == [
+        (
+            "upload_group_file",
+            {
+                "group_id": 123456,
+                "file": str(source.resolve()),
+                "name": "song.flac",
+            },
+        )
+    ]
+    assert event.sent == []
+
+
+async def test_send_music_file_private_upload_and_fallback(temp_dir: Path):
+    source = temp_dir / "song.mp3"
+    source.write_bytes(b"mp3-bytes")
+    bot = _FakeBot()
+    event = _FakeEvent(group_id="", sender_id="3557197375", bot=bot)
+
+    ok = await TestPlugin()._send_music_file(event, str(source), "song.mp3")
+    assert ok is True
+    assert bot.calls[0][0] == "upload_private_file"
+    assert bot.calls[0][1]["user_id"] == 3557197375
+    assert event.sent == []
+
+    # OneBot 不可用时回退 Comp.File
+    event2 = _FakeEvent(group_id="1", sender_id="2", bot=None)
+    ok2 = await TestPlugin()._send_music_file(event2, str(source), "song.mp3")
+    assert ok2 is True
+    assert event2.sent  # 走了 event.send(Comp.File)
+
+
+async def test_raw_download_retries_on_timeout(temp_dir: Path):
+    payload = b"retry-success-audio"
+    hits = {"n": 0}
+
+    class _Resp:
+        def __init__(self, status=200, body=b""):
+            self.status = status
+            self._body = body
+
+        async def _iter(self, _n):
+            yield self._body
+
+        @property
+        def content(self):
+            return types.SimpleNamespace(iter_chunked=self._iter)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    class _Session:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        def get(self, url):
+            hits["n"] += 1
+            if hits["n"] == 1:
+
+                class _Boom:
+                    async def __aenter__(self):
+                        raise asyncio.TimeoutError()
+
+                    async def __aexit__(self, *args):
+                        return False
+
+                return _Boom()
+            return _Resp(200, payload)
+
+    async def _no_sleep(_seconds):
+        return None
+
+    with (
+        patch.object(main.tempfile, "gettempdir", return_value=str(temp_dir)),
+        patch.object(main.aiohttp, "ClientSession", _Session),
+        patch.object(main.asyncio, "sleep", side_effect=_no_sleep),
+    ):
+        result = await TestPlugin()._download_source_audio_to_temp(
+            "http://example.test/a.flac", "RetrySong", "flac"
+        )
+    assert result is not None
+    assert hits["n"] >= 2
+    output = Path(result)
+    assert output.read_bytes() == payload
+    output.unlink()
+
+
 def main_test():
     temp_dir = Path(tempfile.mkdtemp(prefix="astrbot_music_test_"))
     try:
@@ -261,10 +454,13 @@ def main_test():
         run(test_voice_download_falls_back_to_source(temp_dir))
         test_file_command_parsing_and_extension()
         test_play_song_command_parsing()
+        run(test_send_music_file_prefers_onebot_group_upload(temp_dir))
+        run(test_send_music_file_private_upload_and_fallback(temp_dir))
+        run(test_raw_download_retries_on_timeout(temp_dir))
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
-    print("✅ 音乐音频回归测试通过（8 项）")
+    print("✅ 音乐音频回归测试通过（11 项）")
 
 
 if __name__ == "__main__":

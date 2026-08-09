@@ -1,4 +1,9 @@
 {
+  "llm_tools_enable": {
+    "description": "【LLM 工具总开关】开启后，把插件的图片获取、点歌、电击控制等功能注册为大模型可调用的工具（function calling），AI 即可自主处理「发张图」「来首歌」「电一下」等自然语言请求。关闭则不生效（仅保留原有 / 命令）。电击控制涉及物理设备，请确认安全后开启",
+    "type": "bool",
+    "default": false
+  },
   "default_r18": {
     "description": "默认 R18 等级（0=全年龄, 1=R18, 2=混合）",
     "type": "int",
@@ -40,7 +45,7 @@
     "default": 20
   },
   "music_file_max_bytes": {
-    "description": "/音乐 文件 模式的单文件体积上限（字节）。原始音乐文件（如无损 flac）过大时，QQ/NapCat 端常以上传失败(retcode=1200)拒绝。超过此阈值会自动转码为 128kbps MP3 后再发送（需 ffmpeg）。默认 26214400（25MB）。设为 0 则不限制（不推荐，易发送失败）",
+    "description": "/音乐 文件 模式的单文件体积上限（字节）。原始音乐文件（如无损 flac）过大时，QQ/NapCat 端常以上传失败拒绝。超过此阈值会自动转码为 128kbps MP3 后再发送（需 ffmpeg）。QQ 下优先 OneBot 本地上传，绕过 Comp.File 的 HTTP 回调。默认 26214400（25MB）。设为 0 则不限制（不推荐，易发送失败）",
     "type": "int",
     "default": 26214400
   },
@@ -125,9 +130,52 @@
     "default": true
   },
   "reply_seg_mode": {
-    "description": "分段模式：punct=按标点分句（在句号/问号/感叹号等处切分，最自然）；length=按长度切分（配合下方最小/最大段长，超过最大段长时在范围内找标点切）",
+    "description": "分段模式：punct=按标点分句（在句号/问号/感叹号/逗号等处切分，最轻量）；length=按长度切分（配合最小/最大段长，超过最大段长时在范围内找标点切）；llm=调用大模型做语义级分段（最智能，按语义完整性切分，像真人逐条说话，但每条回复会多一次 LLM 调用、增加延迟与消耗）",
     "type": "string",
-    "default": "punct"
+    "default": "punct",
+    "options": ["punct", "length", "llm"]
+  },
+  "reply_seg_llm_provider_id": {
+    "description": "llm 模式专用：用于语义分段的 LLM 提供商。留空则复用当前会话使用的模型",
+    "type": "string",
+    "default": "",
+    "_special": "select_provider",
+    "hint": "为省时省钱，建议选一个廉价快速模型（如 deepseek-v3）专用做分段，不要占用主模型。留空时自动复用当前会话模型"
+  },
+  "reply_seg_llm_density": {
+    "description": "llm 模式专用：分段密度（每段的目标字数规模）",
+    "type": "string",
+    "default": "medium",
+    "options": ["low", "medium", "high"],
+    "hint": "low=低密度，每段较长(~40-70字)，切得少、信息量大；medium=中等(~20-45字)，自然逐句节奏；high=高密度，每段较短(~10-25字)，切得更细更活泼、像刷屏。档位会自动推算段数上限并写进提示词引导模型"
+  },
+  "reply_seg_llm_max_segments": {
+    "description": "llm 模式专用：分段数量上限（留空/0=由密度档位自动推算）",
+    "type": "int",
+    "default": 0,
+    "hint": "设为 0 时按上方「分段密度」自动推算：low=3、medium=5、high=8。也可手动指定硬上限（2~10），超过此数量的段落会被合并到最后一段",
+    "slider": {"min": 0, "max": 10, "step": 1}
+  },
+  "reply_seg_llm_min_chars": {
+    "description": "llm 模式专用：原文短于此字数时不调用 LLM",
+    "type": "int",
+    "default": 30,
+    "hint": "短于此字数的回复直接整段发送，不调用 LLM，省钱省时间。建议 20~50",
+    "slider": {"min": 0, "max": 100, "step": 5}
+  },
+  "reply_seg_llm_timeout": {
+    "description": "llm 模式专用：分段调用超时（秒）",
+    "type": "int",
+    "default": 15,
+    "hint": "单次分段 LLM 调用超过此秒数则中断并降级为规则分段，避免回复卡顿。默认 15 秒，可按网络和模型响应速度自行调整，建议 8~30",
+    "slider": {"min": 3, "max": 60, "step": 1}
+  },
+  "reply_seg_llm_max_tokens": {
+    "description": "llm 模式专用：分段输出的最大 token 数",
+    "type": "int",
+    "default": 512,
+    "hint": "限制输出长度以加速返回。分段结果是简短 JSON 数组，512 通常足够；超长回复可适当调大",
+    "slider": {"min": 64, "max": 2048, "step": 64}
   },
   "reply_seg_split_symbols": {
     "description": "分段切分符号（单字符），机器人会在这些符号处切分（符号保留在段尾）。默认包含中英文逗号，故普通文字之间也会在逗号处断开。可自行增删任意字符，如加空格、分号等",
@@ -135,9 +183,14 @@
     "default": "。！？!?~～…\n,，"
   },
   "reply_seg_split_words": {
-    "description": "分段切分词（可多字符，空格分隔），在这些词的「后面」切分，词保留在段尾。用于颜文字/语气词，如「喵 qwq owo awa ovo w （」。注意：单字符词（如 w）会匹配所有出现位置，可能误切英文单词，按需增删",
+    "description": "分段切分词（可多字符，空格分隔），在这些词的「后面」切分，词保留在段尾。用于颜文字/语气词，如「喵 qwq owo awa ovo」。建议只放多字符词：单字符词（如 w）会匹配所有出现位置、误切英文单词；左括号（等配对符号留在段尾会破坏配对，均不建议放入",
     "type": "string",
-    "default": "喵 qwq owo awa ovo w （"
+    "default": "喵 qwq owo awa ovo"
+  },
+  "reply_seg_merge_threshold": {
+    "description": "punct 模式：短段合并阈值（字符数）。短于此长度的段会被合并到前一段，纯标点段（如孤立的「。」）无条件合并——用于消除逗号切出的碎片和孤立标点。设为 0 可关闭合并",
+    "type": "int",
+    "default": 4
   },
   "reply_seg_min_length": {
     "description": "length 模式：最小段长（字符数）。短于此长度不切分，避免产生过短的片段。建议 10~30",
