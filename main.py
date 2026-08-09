@@ -1907,23 +1907,28 @@ class CurrentCortexPlugin(Star):
             f"群号：{self._PROMO_QQ_GROUP}\n欢迎加入交流使用心得～"
         )
 
-    @filter.command("帮助", alias={"菜单", "功能", "commands", "help"})
+    @filter.command("cc")
     async def command_list_command(self, event: AstrMessageEvent):
-        """查看本插件全部命令的分类总览（渲染为图片）。"""
-        total = sum(len(cat["commands"]) for cat in COMMAND_CATEGORIES)
-        try:
-            url = await self.html_render(
-                _COMMAND_LIST_TMPL,
-                {"categories": COMMAND_CATEGORIES, "total": total},
-            )
-            if url:
-                yield event.image_result(url)
-            else:
-                # html_render 返回空（如 Playwright 未安装），降级为纯文本
+        """CurrentCortex 插件入口：/cc 或 /cc help 查看命令总览。"""
+        arg = event.message_str.strip().lower()
+        if arg in ("", "help", "帮助", "菜单", "功能", "list", "commands"):
+            total = sum(len(cat["commands"]) for cat in COMMAND_CATEGORIES)
+            try:
+                url = await self.html_render(
+                    _COMMAND_LIST_TMPL,
+                    {"categories": COMMAND_CATEGORIES, "total": total},
+                )
+                if url:
+                    yield event.image_result(url)
+                else:
+                    yield event.plain_result(self._command_list_text(total))
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"[Help] 渲染命令列表图片失败，降级纯文本: {e}")
                 yield event.plain_result(self._command_list_text(total))
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"[Help] 渲染命令列表图片失败，降级纯文本: {e}")
-            yield event.plain_result(self._command_list_text(total))
+        else:
+            yield event.plain_result(
+                "💡 发送 /cc 或 /cc help 查看全部命令总览"
+            )
 
     @staticmethod
     def _command_list_text(total: int) -> str:
