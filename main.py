@@ -127,39 +127,36 @@ COMMAND_CATEGORIES = [
     },
 ]
 
-# /帮助 命令的 HTML 模板（Jinja2），渲染为图片。
+# /cc 命令的 HTML 模板（Jinja2），渲染为图片。
 _COMMAND_LIST_TMPL = """\
-<div style="font-family: 'PingFang SC','Microsoft YaHei','Noto Sans SC',sans-serif; width: 560px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 0; border-radius: 16px; overflow: hidden;">
-  <div style="padding: 28px 28px 18px; text-align: center;">
-    <div style="font-size: 30px; font-weight: 700; color: #fff;">🧩 CurrentCortex 命令总览</div>
-    <div style="font-size: 14px; color: rgba(255,255,255,0.75); margin-top: 8px;">共 {{ total }} 个命令 · 发送「/命令 help」查看详细用法</div>
+<div style="font-family: 'PingFang SC','Microsoft YaHei','Noto Sans SC',sans-serif; width: 580px; background: #f0f2f5; padding: 24px 20px; box-sizing: border-box;">
+  <div style="background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a855f7 100%); border-radius: 18px; padding: 30px 28px; text-align: center; margin-bottom: 20px;">
+    <div style="font-size: 32px; font-weight: 800; color: #fff; letter-spacing: 1px;">🧩 CurrentCortex</div>
+    <div style="font-size: 15px; color: rgba(255,255,255,0.8); margin-top: 10px;">多功能 AstrBot 插件 · 共 {{ total }} 个命令</div>
   </div>
-  <div style="background: #f8f9fc; padding: 20px 22px; border-radius: 16px 16px 0 0;">
-    {% for cat in categories %}
-    <div style="margin-bottom: 18px;">
-      <div style="font-size: 17px; font-weight: 700; color: #5558; border-bottom: 2px solid #667eea33; padding-bottom: 6px; margin-bottom: 10px;">
-        <span style="color: #764ba2;">{{ cat.icon }} {{ cat.title }}</span>
+  {% for cat in categories %}
+  <div style="background: #fff; border-radius: 14px; padding: 18px 20px 6px; margin-bottom: 14px;">
+    <div style="display: flex; align-items: center; margin-bottom: 12px;">
+      <span style="background: linear-gradient(135deg, #6366f1, #a855f7); color: #fff; width: 32px; height: 32px; border-radius: 9px; line-height: 32px; text-align: center; font-size: 17px; margin-right: 10px;">{{ cat.icon }}</span>
+      <span style="font-size: 16px; font-weight: 700; color: #1a1a2e;">{{ cat.title }}</span>
+    </div>
+    {% for c in cat.commands %}
+    <div style="display: flex; align-items: center; padding: 9px 0; border-bottom: 1px solid #f0f0f0;">
+      <div style="min-width: 100px;">
+        <span style="font-size: 14px; font-weight: 600; color: #6366f1; background: #eef2ff; padding: 3px 10px; border-radius: 6px;">{{ c.cmd }}</span>
       </div>
-      {% for c in cat.commands %}
-      <div style="display: flex; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid #eee;">
-        <div style="min-width: 120px;">
-          <span style="font-size: 15px; font-weight: 600; color: #333; background: #667eea1a; padding: 2px 8px; border-radius: 5px;">{{ c.cmd }}</span>
-        </div>
-        {% if c.alias != "—" %}
-        <div style="min-width: 90px; padding-top: 2px;">
-          <span style="font-size: 12px; color: #999;">{{ c.alias }}</span>
-        </div>
-        {% else %}
-        <div style="min-width: 90px;"></div>
-        {% endif %}
-        <div style="font-size: 14px; color: #555; line-height: 1.5; flex: 1;">{{ c.desc }}</div>
-      </div>
-      {% endfor %}
+      {% if c.alias != "—" %}
+      <div style="min-width: 80px; font-size: 12px; color: #9ca3af;">{{ c.alias }}</div>
+      {% else %}
+      <div style="min-width: 80px;"></div>
+      {% endif %}
+      <div style="font-size: 14px; color: #4b5563; line-height: 1.5; flex: 1;">{{ c.desc }}</div>
     </div>
     {% endfor %}
-    <div style="text-align: center; font-size: 12px; color: #aaa; padding-top: 4px;">
-      💬 插件交流群：1106353813 · 基于 LeiZ API
-    </div>
+  </div>
+  {% endfor %}
+  <div style="text-align: center; font-size: 12px; color: #9ca3af; padding: 6px 0 4px;">
+    💬 插件交流群：1106353813 · 基于 LeiZ API
   </div>
 </div>"""
 
