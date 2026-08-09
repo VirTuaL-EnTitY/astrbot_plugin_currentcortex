@@ -1778,15 +1778,12 @@ class CurrentCortexPlugin(Star):
     # 大模型回复低频水印。群号与链接为固定官方值，不开放给用户修改。
     # =================================================================== #
 
-    # 插件官方交流群（固定值，非配置项）。
+    # 插件官方交流群号（固定值，非配置项）。
     _PROMO_QQ_GROUP = "1106353813"
-    _PROMO_QQ_GROUP_LINK = (
-        "https://qun.qq.com/universal-share/share?ac=1&authKey=OmLNlwPdKBlOMNNic9zCRIlfAVn%2BqsvY0rZDEpEYLNsZ6D5UvREADl%2FeNd2nGAUH&busi_data=eyJncm91cENvZGUiOiIxMTA2MzUzODEzIiwidG9rZW4iOiJERWFBR1hSV1djMSswSHI4MEpmQzhmTFlzZTN0Q2VvbFEvZXpQbWZIaHNNSW5Dd2dHcFVKVVJmTTdzWG1OWXBVIiwidWluIjoiMTk0NTgyNjM0NiJ9&data=AFoZ21e7OHbTEKvm7w_zeEuScAfmBnqoa2V6OZFXfaajJ7cTjHQNk3JxtyRUTFE69pnNSWekOVIAA54qMXW97Q&svctype=4&tempid=h5_group_info"
-    )
 
     def _promo_group_line(self) -> str:
-        """生成一行群号宣传文本（含链接）。"""
-        return f"💬 插件交流群：{self._PROMO_QQ_GROUP}（[点击加群]({self._PROMO_QQ_GROUP_LINK})）"
+        """生成一行群号宣传文本。"""
+        return f"💬 插件交流群：{self._PROMO_QQ_GROUP}"
 
     def _with_promo(self, text: str) -> str:
         """给命令帮助 / 错误提示文本追加群号宣传后缀。"""
@@ -1806,8 +1803,7 @@ class CurrentCortexPlugin(Star):
         """查询插件官方交流群号。"""
         yield event.plain_result(
             f"💬 CurrentCortex 插件交流群\n"
-            f"群号：{self._PROMO_QQ_GROUP}\n"
-            f"👉 {self._PROMO_QQ_GROUP_LINK}"
+            f"群号：{self._PROMO_QQ_GROUP}\n欢迎加入交流使用心得～"
         )
 
     # =================================================================== #

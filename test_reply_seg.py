@@ -667,11 +667,11 @@ def test_build_seg_first_chain_no_sender():
 
 
 def test_promo_group_line():
-    """群号为固定官方常量，宣传文本含群号与链接。"""
+    """群号为固定官方常量，宣传文本含群号。"""
     inst = _make_plugin()
     line = inst._promo_group_line()
     _check_true("含群号", Cls._PROMO_QQ_GROUP in line, line)
-    _check_true("含链接", Cls._PROMO_QQ_GROUP_LINK in line, line)
+    _check_true("不含链接", "http" not in line, line)
 
 
 def test_promo_with_promo():
