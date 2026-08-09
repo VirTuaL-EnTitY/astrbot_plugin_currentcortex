@@ -1253,14 +1253,8 @@ class CurrentCortexPlugin(Star):
         self._image_proxy = str(config.get("image_proxy", "pixiv.bileizhen.top"))
         self._exclude_ai = bool(config.get("exclude_ai", False))
         self._request_timeout = int(config.get("request_timeout", 15))
-        # 插件宣传 QQ 群：用于 /交流群 命令、帮助/错误提示末尾、回复低频水印。
-        self._promo_qq_group = str(config.get(
-            "promo_qq_group", "1106353813"
-        )).strip()
-        self._promo_qq_group_link = str(config.get(
-            "promo_qq_group_link",
-            "https://qun.qq.com/universal-share/share?ac=1&authKey=OmLNlwPdKBlOMNNic9zCRIlfAVn%2BqsvY0rZDEpEYLNsZ6D5UvREADl%2FeNd2nGAUH&busi_data=eyJncm91cENvZGUiOiIxMTA2MzUzODEzIiwidG9rZW4iOiJERWFBR1hSV1djMSswSHI4MEpmQzhmTFlzZTN0Q2VvbFEvZXpQbWZIaHNNSW5Dd2dHcFVKVVJmTTdzWG1OWXBVIiwidWluIjoiMTk0NTgyNjM0NiJ9&data=AFoZ21e7OHbTEKvm7w_zeEuScAfmBnqoa2V6OZFXfaajJ7cTjHQNk3JxtyRUTFE69pnNSWekOVIAA54qMXW97Q&svctype=4&tempid=h5_group_info"
-        )).strip()
+        # 插件宣传 QQ 群：群号与链接为固定官方值（类常量），不开放给用户修改；
+        # 仅开放下方三个展示渠道的开关。
         self._promo_in_help = bool(config.get("promo_in_help", True))
         self._promo_in_reply = bool(config.get("promo_in_reply", True))
         self._promo_reply_chance = max(0, min(100, int(config.get("promo_reply_chance", 5))))
@@ -1786,18 +1780,18 @@ class CurrentCortexPlugin(Star):
 
     # =================================================================== #
     # 插件宣传（QQ 群）：/交流群 查询命令 + 帮助/错误提示末尾群号 +
-    # 大模型回复低频水印。群号统一由 _promo_qq_group 配置驱动。
+    # 大模型回复低频水印。群号与链接为固定官方值，不开放给用户修改。
     # =================================================================== #
 
+    # 插件官方交流群（固定值，非配置项）。
+    _PROMO_QQ_GROUP = "1106353813"
+    _PROMO_QQ_GROUP_LINK = (
+        "https://qun.qq.com/universal-share/share?ac=1&authKey=OmLNlwPdKBlOMNNic9zCRIlfAVn%2BqsvY0rZDEpEYLNsZ6D5UvREADl%2FeNd2nGAUH&busi_data=eyJncm91cENvZGUiOiIxMTA2MzUzODEzIiwidG9rZW4iOiJERWFBR1hSV1djMSswSHI4MEpmQzhmTFlzZTN0Q2VvbFEvZXpQbWZIaHNNSW5Dd2dHcFVKVVJmTTdzWG1OWXBVIiwidWluIjoiMTk0NTgyNjM0NiJ9&data=AFoZ21e7OHbTEKvm7w_zeEuScAfmBnqoa2V6OZFXfaajJ7cTjHQNk3JxtyRUTFE69pnNSWekOVIAA54qMXW97Q&svctype=4&tempid=h5_group_info"
+    )
+
     def _promo_group_line(self) -> str:
-        """生成一行群号宣传文本（含链接）；未配置群号时返回空串。"""
-        group = self._promo_qq_group
-        if not group:
-            return ""
-        link = self._promo_qq_group_link
-        if link:
-            return f"💬 插件交流群：{group}（[点击加群]({link})）"
-        return f"💬 插件交流群：{group}"
+        """生成一行群号宣传文本（含链接）。"""
+        return f"💬 插件交流群：{self._PROMO_QQ_GROUP}（[点击加群]({self._PROMO_QQ_GROUP_LINK})）"
 
     def _promo_help_suffix(self) -> str:
         """命令帮助 / 错误提示末尾要追加的宣传文本；开关关闭或无群号时返回空。"""
@@ -1811,34 +1805,24 @@ class CurrentCortexPlugin(Star):
         return text + self._promo_help_suffix()
 
     def _promo_reply_suffix(self) -> str:
-        """大模型回复末尾低频追加的水印；按概率命中且未配置群号时返回空。
+        """大模型回复末尾低频追加的水印；按概率命中时返回，否则空。
 
         单条独占一行，避免干扰正文阅读。
         """
-        if not self._promo_in_reply or not self._promo_qq_group:
+        if not self._promo_in_reply:
             return ""
         if random.randint(1, 100) > self._promo_reply_chance:
             return ""
-        return f"\n\n💬 插件交流群：{self._promo_qq_group}"
+        return f"\n\n💬 插件交流群：{self._PROMO_QQ_GROUP}"
 
     @filter.command("交流群", alias={"群号", "加群", "plugin_group"})
     async def promo_group_command(self, event: AstrMessageEvent):
         """查询插件官方交流群号。"""
-        if not self._promo_qq_group:
-            yield event.plain_result("⚠️ 管理员尚未配置插件交流群号")
-            return
-        link = self._promo_qq_group_link
-        if link:
-            yield event.plain_result(
-                f"💬 CurrentCortex 插件交流群\n"
-                f"群号：{self._promo_qq_group}\n"
-                f"👉 {link}"
-            )
-        else:
-            yield event.plain_result(
-                f"💬 CurrentCortex 插件交流群\n"
-                f"群号：{self._promo_qq_group}\n欢迎加入交流使用心得～"
-            )
+        yield event.plain_result(
+            f"💬 CurrentCortex 插件交流群\n"
+            f"群号：{self._PROMO_QQ_GROUP}\n"
+            f"👉 {self._PROMO_QQ_GROUP_LINK}"
+        )
 
     # =================================================================== #
     # LLM 工具（function calling）：把图片获取 / 点歌 / 电击控制注册为
