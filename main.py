@@ -1910,7 +1910,9 @@ class CurrentCortexPlugin(Star):
     @filter.command("cc")
     async def command_list_command(self, event: AstrMessageEvent):
         """CurrentCortex 插件入口：/cc 或 /cc help 查看命令总览。"""
-        arg = event.message_str.strip().lower()
+        # event.message_str 是完整原始消息（含命令名），需剥掉命令前缀
+        arg = re.sub(r"^[/!！]?\s*cc\s*", "", event.message_str.strip(),
+                      flags=re.IGNORECASE).strip().lower()
         if arg in ("", "help", "帮助", "菜单", "功能", "list", "commands"):
             total = sum(len(cat["commands"]) for cat in COMMAND_CATEGORIES)
             try:
