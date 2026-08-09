@@ -67,7 +67,7 @@ HITOKOTO_CATEGORIES = {
 # =================================================================== #
 COMMAND_CATEGORIES = [
     {
-        "icon": "🎨",
+        "icon": "image",
         "title": "图片获取",
         "commands": [
             {"cmd": "/pixiv", "alias": "图片", "desc": "获取或按条件筛选 Pixiv 随机图片"},
@@ -75,7 +75,7 @@ COMMAND_CATEGORIES = [
         ],
     },
     {
-        "icon": "🎵",
+        "icon": "music",
         "title": "音乐点歌",
         "commands": [
             {"cmd": "/music", "alias": "音乐", "desc": "搜索音乐并获取歌曲详情或音频"},
@@ -84,7 +84,7 @@ COMMAND_CATEGORIES = [
         ],
     },
     {
-        "icon": "📚",
+        "icon": "book",
         "title": "漫画",
         "commands": [
             {"cmd": "/jm", "alias": "漫画", "desc": "搜索 JMComic 漫画、查看详情或章节"},
@@ -92,7 +92,7 @@ COMMAND_CATEGORIES = [
         ],
     },
     {
-        "icon": "🔍",
+        "icon": "search",
         "title": "媒体解析",
         "commands": [
             {"cmd": "/解析", "alias": "—", "desc": "自动识别小红书/B站/抖音链接并解析"},
@@ -102,7 +102,7 @@ COMMAND_CATEGORIES = [
         ],
     },
     {
-        "icon": "✨",
+        "icon": "sparkle",
         "title": "实用工具",
         "commands": [
             {"cmd": "/hitokoto", "alias": "一言", "desc": "获取随机每日一言（12 种分类）"},
@@ -110,14 +110,14 @@ COMMAND_CATEGORIES = [
         ],
     },
     {
-        "icon": "🔌",
+        "icon": "bolt",
         "title": "DG-LAB 设备",
         "commands": [
             {"cmd": "/dglab", "alias": "电击", "desc": "管理、绑定和控制 DG-LAB 设备"},
         ],
     },
     {
-        "icon": "⚙️",
+        "icon": "settings",
         "title": "插件管理",
         "commands": [
             {"cmd": "/开关", "alias": "toggle", "desc": "按群聊独立开启/关闭本插件"},
@@ -127,36 +127,58 @@ COMMAND_CATEGORIES = [
     },
 ]
 
-# /cc 命令的 HTML 模板（Jinja2），渲染为图片。
+# /cc 命令的 HTML 模板（Jinja2），晴空蓝+雪雾白配色，MDUI 风格，内联 SVG 图标。
+# {svg_*} 是各分类的 CSS（SVG）图标，按 cat.icon 条件渲染。
 _COMMAND_LIST_TMPL = """\
-<div style="font-family: 'PingFang SC','Microsoft YaHei','Noto Sans SC',sans-serif; width: 580px; background: #f0f2f5; padding: 24px 20px; box-sizing: border-box;">
-  <div style="background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a855f7 100%); border-radius: 18px; padding: 30px 28px; text-align: center; margin-bottom: 20px;">
-    <div style="font-size: 32px; font-weight: 800; color: #fff; letter-spacing: 1px;">🧩 CurrentCortex</div>
-    <div style="font-size: 15px; color: rgba(255,255,255,0.8); margin-top: 10px;">多功能 AstrBot 插件 · 共 {{ total }} 个命令</div>
-  </div>
-  {% for cat in categories %}
-  <div style="background: #fff; border-radius: 14px; padding: 18px 20px 6px; margin-bottom: 14px;">
-    <div style="display: flex; align-items: center; margin-bottom: 12px;">
-      <span style="background: linear-gradient(135deg, #6366f1, #a855f7); color: #fff; width: 32px; height: 32px; border-radius: 9px; line-height: 32px; text-align: center; font-size: 17px; margin-right: 10px;">{{ cat.icon }}</span>
-      <span style="font-size: 16px; font-weight: 700; color: #1a1a2e;">{{ cat.title }}</span>
+{% macro svg_icon(name) -%}
+{%- if name == "image" -%}
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+{%- elif name == "music" -%}
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+{%- elif name == "book" -%}
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+{%- elif name == "search" -%}
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+{%- elif name == "sparkle" -%}
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/></svg>
+{%- elif name == "bolt" -%}
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+{%- elif name == "settings" -%}
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+{%- else -%}
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><circle cx="12" cy="12" r="9"/></svg>
+{%- endif -%}
+{%- endmacro -%}
+<div style="font-family: 'PingFang SC','Microsoft YaHei','Noto Sans SC',sans-serif; width: 100%; background: #eef4fa; padding: 28px 0; text-align: center;">
+  <div style="display: inline-block; text-align: left; width: 540px; max-width: 540px;">
+    <div style="background: linear-gradient(135deg, #4FC3F7 0%, #29B6F6 40%, #0288D1 100%); border-radius: 20px; padding: 32px 28px; text-align: center; margin-bottom: 18px; box-shadow: 0 4px 20px rgba(2,136,209,0.18);">
+      <div style="font-size: 30px; font-weight: 800; color: #fff; letter-spacing: 1px;">CurrentCortex</div>
+      <div style="font-size: 14px; color: rgba(255,255,255,0.85); margin-top: 8px;">多功能 AstrBot 插件 · 共 {{ total }} 个命令</div>
     </div>
-    {% for c in cat.commands %}
-    <div style="display: flex; align-items: center; padding: 9px 0; border-bottom: 1px solid #f0f0f0;">
-      <div style="min-width: 100px;">
-        <span style="font-size: 14px; font-weight: 600; color: #6366f1; background: #eef2ff; padding: 3px 10px; border-radius: 6px;">{{ c.cmd }}</span>
+    {% for cat in categories %}
+    <div style="background: #fff; border-radius: 16px; padding: 18px 22px 6px; margin-bottom: 12px; box-shadow: 0 1px 6px rgba(2,136,209,0.06);">
+      <div style="display: flex; align-items: center; margin-bottom: 10px;">
+        <span style="background: linear-gradient(135deg, #4FC3F7, #0288D1); color: #fff; width: 36px; height: 36px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; margin-right: 12px; flex-shrink: 0;">{{ svg_icon(cat.icon) }}</span>
+        <span style="font-size: 16px; font-weight: 600; color: #0277BD;">{{ cat.title }}</span>
       </div>
-      {% if c.alias != "—" %}
-      <div style="min-width: 80px; font-size: 12px; color: #9ca3af;">{{ c.alias }}</div>
-      {% else %}
-      <div style="min-width: 80px;"></div>
-      {% endif %}
-      <div style="font-size: 14px; color: #4b5563; line-height: 1.5; flex: 1;">{{ c.desc }}</div>
+      {% for c in cat.commands %}
+      <div style="display: flex; align-items: center; padding: 9px 0; border-bottom: 1px solid #f0f5fa;">
+        <div style="min-width: 96px;">
+          <span style="font-size: 14px; font-weight: 600; color: #0288D1; background: #e1f5fe; padding: 3px 10px; border-radius: 6px;">{{ c.cmd }}</span>
+        </div>
+        {% if c.alias != "—" %}
+        <div style="min-width: 76px; font-size: 12px; color: #90a4ae;">{{ c.alias }}</div>
+        {% else %}
+        <div style="min-width: 76px;"></div>
+        {% endif %}
+        <div style="font-size: 14px; color: #455a64; line-height: 1.5; flex: 1;">{{ c.desc }}</div>
+      </div>
+      {% endfor %}
     </div>
     {% endfor %}
-  </div>
-  {% endfor %}
-  <div style="text-align: center; font-size: 12px; color: #9ca3af; padding: 6px 0 4px;">
-    💬 插件交流群：1106353813 · 基于 LeiZ API
+    <div style="text-align: center; font-size: 12px; color: #90a4ae; padding: 8px 0 2px;">
+      💬 插件交流群：1106353813 · 基于 LeiZ API
+    </div>
   </div>
 </div>"""
 
