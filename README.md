@@ -123,6 +123,8 @@ pip install websockets>=10.0   # 仅 DG-LAB 功能需要
 
 ## 🎯 功能详解
 
+> 💡 在聊天中发送 **`/帮助`**（别名 `/菜单` `/功能` `/help`）可查看全部命令的分类总览图片。
+
 ### 指令速查表
 
 所有指令均支持中英文别名：
@@ -935,5 +937,5 @@ astrbot_plugin_currentcortex/
 
 ---
 
-**版本**：v1.7.5  
+**版本**：v1.8.0  
 **仓库**：[GitHub](https://github.com/backrooms-yrc/astrbot_plugin_currentcortex)

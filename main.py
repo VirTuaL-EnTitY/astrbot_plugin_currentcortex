@@ -62,6 +62,107 @@ HITOKOTO_CATEGORIES = {
     "l": "抖机灵",
 }
 
+# =================================================================== #
+# 命令总览数据（供 /帮助 命令渲染为图片），按功能分类。
+# =================================================================== #
+COMMAND_CATEGORIES = [
+    {
+        "icon": "🎨",
+        "title": "图片获取",
+        "commands": [
+            {"cmd": "/pixiv", "alias": "图片", "desc": "获取或按条件筛选 Pixiv 随机图片"},
+            {"cmd": "/femboy", "alias": "男娘", "desc": "获取一张随机男娘图片"},
+        ],
+    },
+    {
+        "icon": "🎵",
+        "title": "音乐点歌",
+        "commands": [
+            {"cmd": "/music", "alias": "音乐", "desc": "搜索音乐并获取歌曲详情或音频"},
+            {"cmd": "/点歌", "alias": "—", "desc": "快捷点歌，直接返回语音条"},
+            {"cmd": "/音源", "alias": "—", "desc": "查看或切换点歌音源（auto/网易云/酷狗）"},
+        ],
+    },
+    {
+        "icon": "📚",
+        "title": "漫画",
+        "commands": [
+            {"cmd": "/jm", "alias": "漫画", "desc": "搜索 JMComic 漫画、查看详情或章节"},
+            {"cmd": "/jmcommend", "alias": "漫画推荐", "desc": "随机推荐一部 JMComic 漫画"},
+        ],
+    },
+    {
+        "icon": "🔍",
+        "title": "媒体解析",
+        "commands": [
+            {"cmd": "/解析", "alias": "—", "desc": "自动识别小红书/B站/抖音链接并解析"},
+            {"cmd": "/xhs", "alias": "小红书", "desc": "解析小红书链接"},
+            {"cmd": "/bilibili", "alias": "B站/b站", "desc": "解析 Bilibili 链接"},
+            {"cmd": "/douyin", "alias": "抖音", "desc": "解析抖音链接"},
+        ],
+    },
+    {
+        "icon": "✨",
+        "title": "实用工具",
+        "commands": [
+            {"cmd": "/hitokoto", "alias": "一言", "desc": "获取随机每日一言（12 种分类）"},
+            {"cmd": "/weather", "alias": "天气", "desc": "查询指定城市实时天气与预报"},
+        ],
+    },
+    {
+        "icon": "🔌",
+        "title": "DG-LAB 设备",
+        "commands": [
+            {"cmd": "/dglab", "alias": "电击", "desc": "管理、绑定和控制 DG-LAB 设备"},
+        ],
+    },
+    {
+        "icon": "⚙️",
+        "title": "插件管理",
+        "commands": [
+            {"cmd": "/开关", "alias": "toggle", "desc": "按群聊独立开启/关闭本插件"},
+            {"cmd": "/交流群", "alias": "群号/加群", "desc": "查询插件官方交流群号"},
+            {"cmd": "/apitest", "alias": "连通测试", "desc": "诊断 LeiZ API 接口连通状态"},
+        ],
+    },
+]
+
+# /帮助 命令的 HTML 模板（Jinja2），渲染为图片。
+_COMMAND_LIST_TMPL = """\
+<div style="font-family: 'PingFang SC','Microsoft YaHei','Noto Sans SC',sans-serif; width: 560px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 0; border-radius: 16px; overflow: hidden;">
+  <div style="padding: 28px 28px 18px; text-align: center;">
+    <div style="font-size: 30px; font-weight: 700; color: #fff;">🧩 CurrentCortex 命令总览</div>
+    <div style="font-size: 14px; color: rgba(255,255,255,0.75); margin-top: 8px;">共 {{ total }} 个命令 · 发送「/命令 help」查看详细用法</div>
+  </div>
+  <div style="background: #f8f9fc; padding: 20px 22px; border-radius: 16px 16px 0 0;">
+    {% for cat in categories %}
+    <div style="margin-bottom: 18px;">
+      <div style="font-size: 17px; font-weight: 700; color: #5558; border-bottom: 2px solid #667eea33; padding-bottom: 6px; margin-bottom: 10px;">
+        <span style="color: #764ba2;">{{ cat.icon }} {{ cat.title }}</span>
+      </div>
+      {% for c in cat.commands %}
+      <div style="display: flex; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid #eee;">
+        <div style="min-width: 120px;">
+          <span style="font-size: 15px; font-weight: 600; color: #333; background: #667eea1a; padding: 2px 8px; border-radius: 5px;">{{ c.cmd }}</span>
+        </div>
+        {% if c.alias != "—" %}
+        <div style="min-width: 90px; padding-top: 2px;">
+          <span style="font-size: 12px; color: #999;">{{ c.alias }}</span>
+        </div>
+        {% else %}
+        <div style="min-width: 90px;"></div>
+        {% endif %}
+        <div style="font-size: 14px; color: #555; line-height: 1.5; flex: 1;">{{ c.desc }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endfor %}
+    <div style="text-align: center; font-size: 12px; color: #aaa; padding-top: 4px;">
+      💬 插件交流群：1106353813 · 基于 LeiZ API
+    </div>
+  </div>
+</div>"""
+
 HELP_TEXT = """🎨 Pixiv 随机图片插件 使用说明
 
 📌 基本命令（别名：/图片）
@@ -1805,6 +1906,38 @@ class CurrentCortexPlugin(Star):
             f"💬 CurrentCortex 插件交流群\n"
             f"群号：{self._PROMO_QQ_GROUP}\n欢迎加入交流使用心得～"
         )
+
+    @filter.command("帮助", alias={"菜单", "功能", "commands", "help"})
+    async def command_list_command(self, event: AstrMessageEvent):
+        """查看本插件全部命令的分类总览（渲染为图片）。"""
+        total = sum(len(cat["commands"]) for cat in COMMAND_CATEGORIES)
+        try:
+            url = await self.html_render(
+                _COMMAND_LIST_TMPL,
+                {"categories": COMMAND_CATEGORIES, "total": total},
+            )
+            if url:
+                yield event.image_result(url)
+            else:
+                # html_render 返回空（如 Playwright 未安装），降级为纯文本
+                yield event.plain_result(self._command_list_text(total))
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[Help] 渲染命令列表图片失败，降级纯文本: {e}")
+            yield event.plain_result(self._command_list_text(total))
+
+    @staticmethod
+    def _command_list_text(total: int) -> str:
+        """html_render 不可用时的纯文本降级。"""
+        lines = [f"🧩 CurrentCortex 命令总览（共 {total} 个）\n"]
+        for cat in COMMAND_CATEGORIES:
+            lines.append(f"{cat['icon']} {cat['title']}")
+            for c in cat["commands"]:
+                alias = f"（{c['alias']}）" if c["alias"] != "—" else ""
+                lines.append(f"  {c['cmd']}{alias}  {c['desc']}")
+            lines.append("")
+        lines.append("💬 发送「/命令 help」查看详细用法")
+        lines.append(f"💬 插件交流群：1106353813")
+        return "\n".join(lines)
 
     # =================================================================== #
     # LLM 工具（function calling）：把图片获取 / 点歌 / 电击控制注册为
