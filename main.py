@@ -2180,8 +2180,9 @@ class CurrentCortexPlugin(Star):
                 if i > 0:
                     await asyncio.sleep(random.uniform(lo, hi))
                 text = seg
-                if i == 0 and self._reply_seg_mention:
-                    # 首条消息 @ 并引用回复用户，让分段回复有明确归属
+                # 仅群聊首条消息 @ 并引用回复用户（私聊无意义，直接发纯文本）
+                if (i == 0 and self._reply_seg_mention
+                        and event.get_message_type() == MessageType.GROUP_MESSAGE):
                     await event.send(self._build_seg_first_chain(event, text))
                 else:
                     await event.send(MessageChain().message(text))
