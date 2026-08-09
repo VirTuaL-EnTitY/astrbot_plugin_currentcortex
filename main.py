@@ -1488,6 +1488,8 @@ class CurrentCortexPlugin(Star):
         # 通过 on_decorating_result 钩子在框架自带分段/发送前介入。
         self._reply_seg_enable = bool(config.get("reply_seg_enable", False))
         self._reply_seg_only_llm = bool(config.get("reply_seg_only_llm", True))
+        # 分段回复首条消息是否 @ 并引用回复用户（让分段回复有明确归属）。
+        self._reply_seg_mention = bool(config.get("reply_seg_mention", True))
         self._reply_seg_mode = str(config.get("reply_seg_mode", "punct")).strip()
         self._reply_seg_symbols = str(
             config.get("reply_seg_split_symbols", "。！？!?~～…\n,，")
@@ -2132,13 +2134,36 @@ class CurrentCortexPlugin(Star):
             for i, seg in enumerate(segments):
                 if i > 0:
                     await asyncio.sleep(random.uniform(lo, hi))
-                await event.send(MessageChain().message(seg))
+                if i == 0 and self._reply_seg_mention:
+                    # 首条消息 @ 并引用回复用户，让分段回复有明确归属
+                    await event.send(self._build_seg_first_chain(event, seg))
+                else:
+                    await event.send(MessageChain().message(seg))
 
             # 绕过框架发送后，需手动写回对话历史
             await self._save_seg_history(event, full_text)
             logger.info(f"[ReplySeg] 分段回复完成，共 {len(segments)} 段")
         except Exception as e:
             logger.error(f"[ReplySeg] 分段异常，已跳过（回复原文）: {e}")
+
+    @staticmethod
+    def _build_seg_first_chain(event: AstrMessageEvent, text: str) -> MessageChain:
+        """构造分段回复的首条消息链：引用回复 + @ 发送者 + 文本。
+
+        取不到消息 ID 或发送者 ID 时安全降级为纯文本链。
+        Reply 段必须置于链首（OneBot 要求 reply 段在最前）。
+        """
+        chain: list = [Comp.Plain(text)]
+        try:
+            message_id = getattr(getattr(event, "message_obj", None), "message_id", None)
+            sender_id = event.get_sender_id()
+            if message_id:
+                chain.insert(0, Comp.Reply(id=str(message_id)))
+            if sender_id:
+                chain.insert(1 if message_id else 0, Comp.At(qq=sender_id))
+        except Exception as e:  # noqa: BLE001
+            logger.debug(f"[ReplySeg] 构造 @/回复段失败，降级纯文本: {e}")
+        return MessageChain(chain=chain)
 
     # llm 模式：分段密度档位映射。每档定义「每段目标字数区间」+「默认段数上限」
     # +「prompt 引导语」。low=每段长(信息密度大)、medium=适中、high=每段短(更碎更活泼)。

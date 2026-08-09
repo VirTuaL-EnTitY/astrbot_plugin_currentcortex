@@ -538,6 +538,7 @@ pip install websockets>=10.0   # 仅 DG-LAB 功能需要
 | --- | --- | --- | --- |
 | `reply_seg_enable` | bool | false | **【总开关】** 开启分段回复 |
 | `reply_seg_only_llm` | bool | true | 仅对大模型(LLM)回复分段；关闭则插件命令回复（如 `/pixiv`）也会被分段。建议保持开启 |
+| `reply_seg_mention` | bool | true | 分段回复的首条消息是否 @ 并引用回复用户（让多条分段有明确归属）。部分平台不支持引用回复时自动降级 |
 | `reply_seg_mode` | string | punct | 分段模式：`punct` / `length` / `llm`（见下方说明） |
 | `reply_seg_llm_provider_id` | string | `""` | **llm 模式专用**：用于分段的 LLM 提供商 ID。留空则复用当前会话模型；建议填廉价快速模型的 ID |
 | `reply_seg_llm_density` | string | `medium` | **llm 模式专用**：分段密度，即每段目标字数。`low`=每段长(~40-70字，切少)、`medium`=适中(~20-45字)、`high`=每段短(~10-25字，切细更活泼)。会自动推算段数上限并引导模型 |

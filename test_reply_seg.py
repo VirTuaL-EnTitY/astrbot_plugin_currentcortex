@@ -65,7 +65,10 @@ astrbot_event.filter = types.SimpleNamespace(
 astrbot_event.AstrMessageEvent = object
 astrbot_event.MessageEventResult = object
 astrbot_event.MessageChain = type(
-    "MessageChain", (), {"message": lambda self, *a, **k: self}
+    "MessageChain", (), {
+        "message": lambda self, *a, **k: self,
+        "__init__": lambda self, chain=None, **k: setattr(self, "chain", chain or []),
+    }
 )
 
 astrbot_event_filter = types.ModuleType("astrbot.api.event.filter")
@@ -84,6 +87,15 @@ astrbot_star.Star = object
 astrbot_star.register = lambda *args, **kwargs: lambda cls: cls
 
 astrbot_components = types.ModuleType("astrbot.api.message_components")
+
+# 最小化的消息段 stub，供 _build_seg_first_chain 测试使用。
+# 类名与真实组件保持一致，便于按 type.__name__ 断言。
+_StubPlain = type("Plain", (), {"__init__": lambda self, text="", **kw: setattr(self, "text", text)})
+_StubReply = type("Reply", (), {"__init__": lambda self, id=None, **kw: setattr(self, "id", id)})
+_StubAt = type("At", (), {"__init__": lambda self, qq=None, **kw: setattr(self, "qq", qq)})
+astrbot_components.Plain = _StubPlain
+astrbot_components.Reply = _StubReply
+astrbot_components.At = _StubAt
 
 astrbot_provider = types.ModuleType("astrbot.api.provider")
 astrbot_provider.ProviderRequest = object
@@ -212,10 +224,15 @@ class _FakeContext:
 
 
 class _FakeEvent:
-    """模拟 AstrMessageEvent，只暴露 _segment_by_llm 用到的字段。"""
+    """模拟 AstrMessageEvent，只暴露分段/工具用到的字段。"""
 
-    def __init__(self, umo="fake-umo"):
+    def __init__(self, umo="fake-umo", message_id=None, sender_id=""):
         self.unified_msg_origin = umo
+        self.message_obj = type("MObj", (), {"message_id": message_id})()
+        self._sender_id = sender_id
+
+    def get_sender_id(self):
+        return self._sender_id
 
 
 # --------------------------------------------------------------------------- #
@@ -610,6 +627,39 @@ def test_density_prompt_injection():
                     Cls._REPLY_SEG_DENSITY_PROFILES[density]["guidance"][:6] in sp, "")
 
 
+def test_build_seg_first_chain_with_mention():
+    """首段消息链含 Reply + At + Plain（顺序正确）。"""
+    ev = _FakeEvent(message_id="msg123", sender_id="10086")
+    chain = Cls._build_seg_first_chain(ev, "你好呀")
+    types = [type(c).__name__ for c in chain.chain]
+    _check("含3段", len(chain.chain), 3)
+    _check("Reply在首", types[0], "Reply")
+    _check("At在次", types[1], "At")
+    _check("Plain在末", types[2], "Plain")
+    # Reply 的 id 正确
+    _check("Reply-id", chain.chain[0].id, "msg123")
+    # At 的 qq 正确
+    _check("At-qq", str(chain.chain[0 + 1].qq), "10086")
+
+
+def test_build_seg_first_chain_no_message_id():
+    """无 message_id 时不加 Reply，但仍有 At + Plain。"""
+    ev = _FakeEvent(message_id=None, sender_id="10086")
+    chain = Cls._build_seg_first_chain(ev, "你好")
+    types = [type(c).__name__ for c in chain.chain]
+    _check_true("无Reply", "Reply" not in types, f"不应有Reply: {types}")
+    _check_true("有At", "At" in types, f"应有At: {types}")
+    _check_true("有Plain", "Plain" in types, f"应有Plain: {types}")
+
+
+def test_build_seg_first_chain_no_sender():
+    """无 sender_id 时不加 At，降级为纯 Plain。"""
+    ev = _FakeEvent(message_id=None, sender_id="")
+    chain = Cls._build_seg_first_chain(ev, "你好")
+    _check("纯文本降级", len(chain.chain), 1)
+    _check("仅Plain", type(chain.chain[0]).__name__, "Plain")
+
+
 # --------------------------------------------------------------------------- #
 # 入口
 # --------------------------------------------------------------------------- #
@@ -648,6 +698,10 @@ TESTS = [
     test_density_auto_max_segments,
     test_density_manual_override_max_segments,
     test_density_prompt_injection,
+    # 首段消息链（@ + 引用回复）
+    test_build_seg_first_chain_with_mention,
+    test_build_seg_first_chain_no_message_id,
+    test_build_seg_first_chain_no_sender,
 ]
 
 
