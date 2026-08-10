@@ -54,7 +54,8 @@ CONFIGS = (
     ("dglab_server_url", "DG-LAB Socket V2 服务器地址", "", "text"),
     ("dglab_heartbeat_interval", "DG-LAB 心跳间隔（秒）", 60, "number"),
     ("dglab_auto_connect", "自动连接 DG-LAB", False, "boolean"),
-    ("dglab_webui_enabled", "启用 DG-LAB WebUI", True, "boolean"),
+    ("dglab_webui_enabled", "启用 DG-LAB WebUI", False, "boolean"),
+    ("dglab_webui_host", "DG-LAB WebUI 绑定地址", "127.0.0.1", "text"),
     ("dglab_webui_port", "DG-LAB WebUI 端口", 9178, "number"),
 )
 
@@ -287,6 +288,7 @@ class CurrentCortexQtinePlugin(BasePlugin):
                 device_store=device_store,
                 user_store=self._shared._user_store,
                 permission_store=self._shared._permission_store,
+                host=str(values.get("dglab_webui_host", "127.0.0.1")).strip(),
                 port=int(values["dglab_webui_port"]),
             )
 

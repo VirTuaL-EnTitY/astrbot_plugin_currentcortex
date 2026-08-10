@@ -33,7 +33,7 @@ class DGLabWebUI:
         device_store: DeviceStore,
         user_store: UserStore,
         permission_store: PermissionStore,
-        host: str = "0.0.0.0",
+        host: str = "127.0.0.1",
         port: int = 9800,
     ):
         self._pool = connection_pool
