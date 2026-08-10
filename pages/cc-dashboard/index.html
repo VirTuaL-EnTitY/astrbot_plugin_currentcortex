@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CurrentCortex · 总Pages</title>
+    <!-- mdui 组件库（本地，无外网依赖） -->
+    <link rel="stylesheet" href="./vendor/mdui.css" />
+    <link rel="stylesheet" href="./app.css" />
+  </head>
+  <body class="mdui-theme-light">
+    <div id="app" v-cloak></div>
+
+    <footer class="cc-footer">
+      <span>CurrentCortex · 作者 Rcst20 · 交流群 1106353813</span>
+    </footer>
+
+    <!-- 本地依赖：Vue 3（含编译器）+ mdui 2（Web Components） -->
+    <script src="./vendor/vue.global.prod.js"></script>
+    <script src="./vendor/mdui.global.js"></script>
+    <script src="./app.js" defer></script>
+
+    <!-- 兜底：若 Vue 或 mdui 加载失败（极端情况），给出明确提示而非白屏 -->
+    <script>
+      window.addEventListener("load", function () {
+        if (!window.Vue || !window.mdui) {
+          var el = document.getElementById("app");
+          if (el) {
+            el.removeAttribute("v-cloak");
+            el.innerHTML =
+              '<div style="padding:60px 20px;text-align:center;color:#5b7a95;font-size:14px">' +
+              "页面资源加载失败，请刷新重试。<br/>若持续出现，请检查插件文件是否完整。" +
+              "</div>";
+          }
+        }
+      });
+    </script>
+  </body>
+</html>

@@ -32,6 +32,7 @@ Pixiv 随机图片 · 每日一言 · 天气查询 · 男娘图片 · 网易云�
   - [6. 天气查询](#6-天气查询--weather-别名天气)
   - [7. 男娘图片](#7-男娘图片--femboy-别名男娘)
   - [8. DG-LAB 设备管理](#8-dg-lab-设备管理--dglab-别名电击)
+- [🖥️ 总 Pages](#️-总-pages)
 - [🧩 按群聊开关](#-按群聊独立开关)
 - [✂️ 分段回复](#️-分段回复)
 - [🤖 LLM 工具](#-llm-工具)
@@ -56,7 +57,8 @@ Pixiv 随机图片 · 每日一言 · 天气查询 · 男娘图片 · 网易云�
 | ✨ **每日一言** | 12 种分类（动画/漫画/游戏/文学/诗词/影视…） |
 | 🌤️ **天气查询** | 实时天气 + 未来 3 天预报 |
 | 👗 **男娘图片** | 随机男娘主题图片（WebP） |
-| 🔌 **DG-LAB** | Socket V2 设备全生命周期管理、多用户/多设备隔离、WebUI 控制面板 |
+| 🔌 **DG-LAB** | Socket V2 设备全生命周期管理、多用户/多设备隔离、CCDG WebUI 控制面板 |
+| 🖥️ **总 Pages** | AstrBot WebUI 集成总面板：仪表板 · 帮助中心 · 可视化设置（保存即热重载）· 郊狼控制（公网暴露开关）· 联系我们 |
 | 🧩 **按群聊开关** | 在单个群用 `/开关` 命令一键关闭/开启本插件全部命令，互不影响 |
 | 🧠 **跨群聊记忆** | 同平台所有群共享一份持久化上下文，自动注入 LLM 请求 |
 | ✂️ **分段回复** | 把机器人回复拆成多条消息分次发送，模拟逐条回复。支持标点/长度/LLM 语义三种分段模式 |
@@ -468,13 +470,14 @@ pip install websockets>=10.0   # 仅 DG-LAB 功能需要
    /dglab unbind
 ```
 
-#### WebUI 控制面板
+#### CCDG WebUI 控制面板
 
-启用 `dglab_webui_enabled` 后，插件会在 `dglab_webui_host`:`dglab_webui_port`（默认 `127.0.0.1:9178`）启动一个浏览器远程控制界面，可在网页上查看/控制设备，Material Design 3 风格。
+启用 `dglab_webui_enabled` 后，插件会在 `dglab_webui_host`:`dglab_webui_port`（默认 `127.0.0.1:9178`）启动一个 CCDG WebUI 浏览器远程控制界面，可在网页上查看/控制设备，Material Design 3 风格。
 
-> ⚠️ **WebUI 安全（重要）**
+> ⚠️ **CCDG WebUI 安全（重要）**
 > - 自 v1.5.3 起，**WebUI 默认关闭**（`dglab_webui_enabled` 默认 `false`），需手动开启。
 > - 默认监听地址为 `127.0.0.1`（仅本机访问）。**如需公网访问，请将 `dglab_webui_host` 显式设为 `0.0.0.0`，并务必在前面部署反向代理与访问控制**（如 Nginx + Basic Auth / IP 白名单）。
+> - 也可以直接在 **总 Pages → 郊狼控制** 里用「暴露公网」开关一键切换 `127.0.0.1` / `0.0.0.0`（带二次确认与公网链接展示）。
 > - WebUI 内置独立的用户注册/登录系统，**与机器人本体/平台账号无关**：任何能访问该端口的人都能注册账号。不要在无防护的情况下直接暴露到公网。
 > - 建议仅在本机使用，或仅在内网/经反代+鉴权后对外提供。
 
@@ -485,6 +488,30 @@ pip install websockets>=10.0   # 仅 DG-LAB 功能需要
 - **安全机制**：所有参数严格校验，操作超时保护，强度限制 0-200。
 
 > ⚠️ 仅支持**郊狼脉冲主机 3.0**；二维码在会话期间有效，超时需重新生成；建议局域网用 `ws://`，公网用 `wss://`。
+
+---
+
+## 🖥️ 总 Pages
+
+> 自 **v1.9.0** 起，插件集成了 AstrBot 插件 Pages 总面板（mdui 2 Material Design 3 风格，晴空蓝 + 雪雾白）。在 AstrBot WebUI 的 **插件详情 → Pages**（或侧边栏「插件 Pages」分组）中打开。
+
+总面板共 5 个页面：
+
+| 页面 | 说明 |
+| --- | --- |
+| 📊 **仪表板** | 插件运行总览：运行时长、已绑定设备、活跃连接、注册用户、插件版本/作者/启动时间、功能开关状态 |
+| 📖 **帮助中心** | 内置使用文档与常见问题（快速开始 / 郊狼 / 分段回复 / 跨群记忆 / 故障排查） |
+| ⚙️ **设置** | 可视化修改全部插件配置：每个配置项都有中文名 + 人话解释，保存后**自动热重载**生效，无需手动重启 |
+| ⚡ **郊狼控制** | CCDG WebUI 总开关 + **暴露公网开关**（见下） |
+| 💬 **联系我们** | 开发者信息、GitHub 仓库、QQ 交流群（一键加群） |
+
+#### 郊狼控制：公网暴露开关
+
+- **WebUI 总开关**：仅启用 CCDG WebUI，监听保持 `127.0.0.1`（仅本机可访问，**不算暴露公网**）。
+- **暴露公网开关**（需先启用 WebUI）：打开后自动把 `dglab_webui_host` 改为 `0.0.0.0`（端口 `dglab_webui_port`，默认 `9178`），探测本机公网 IP 并展示公网跳转链接；关闭后自动改回 `127.0.0.1`。
+- 打开暴露前会弹出**二次确认**，并持续显示安全警告；关闭 WebUI 总开关时也会自动把监听地址清理回 `127.0.0.1`，避免残留暴露配置。
+
+> ⚠️ **安全提醒**：监听 `0.0.0.0` 意味着公网任意地址都能访问 WebUI 的注册 / 登录 / 设备接口。暴露公网前请务必先配置**反向代理 + 鉴权**（如 Caddy + BasicAuth、Nginx + IP 白名单、Cloudflare Zero Trust），否则任何人都有可能控制你的郊狼设备。
 
 ---
 
@@ -702,9 +729,9 @@ pip install websockets>=10.0   # 仅 DG-LAB 功能需要
 | `dglab_server_url` | string | （空） | 中转服务器地址（如 `ws://192.168.1.100:9999`） |
 | `dglab_heartbeat_interval` | int | 60 | 心跳间隔（秒），建议 30-120 |
 | `dglab_auto_connect` | bool | false | 插件启动时是否自动连接（一般设为 false） |
-| `dglab_webui_enabled` | bool | false | 是否启用 WebUI 控制面板（**默认关闭**；需了解风险后手动开启） |
-| `dglab_webui_host` | string | 127.0.0.1 | WebUI 监听地址（默认仅本机；公网需显式设为 `0.0.0.0` 并加反代+鉴权） |
-| `dglab_webui_port` | int | 9178 | WebUI 监听端口 |
+| `dglab_webui_enabled` | bool | false | 是否启用 CCDG WebUI 控制面板（**默认关闭**；需了解风险后手动开启） |
+| `dglab_webui_host` | string | 127.0.0.1 | CCDG WebUI 监听地址（默认仅本机；公网需显式设为 `0.0.0.0` 并加反代+鉴权） |
+| `dglab_webui_port` | int | 9178 | CCDG WebUI 监听端口 |
 
 <details>
 <summary><b>📦 DG-LAB 中转服务器部署</b></summary>
@@ -869,6 +896,13 @@ cp -a qtine/ /path/to/Qtine/plugins/currentcortex/
 ```text
 astrbot_plugin_currentcortex/
 ├── main.py                      # 主程序：所有命令注册与 API 客户端
+├── _pages_api.py                # 总 Pages 后端 API（仪表板/设置/郊狼/帮助）
+├── pages/                       # 总 Pages 前端（mdui 2 组件库，全部本地化）
+│   └── cc-dashboard/
+│       ├── index.html           # Pages 入口
+│       ├── app.js               # Vue 3 单页应用（5 个页面）
+│       ├── app.css              # 晴空蓝 + 雪雾白主题
+│       └── vendor/              # 本地依赖：Vue 3 / mdui 2 / Material Icons 字体
 ├── cross_group_memory.py        # 跨群聊记忆持久化存储
 ├── group_switch_store.py        # 按群聊开关状态持久化存储
 ├── media_parser.py              # 小红书/B站/抖音 媒体解析
@@ -877,7 +911,7 @@ astrbot_plugin_currentcortex/
 ├── dglab_device_store.py        # DG-LAB 设备绑定关系持久化
 ├── dglab_connection_pool.py     # DG-LAB 连接池与状态管理
 ├── dglab_commands.py            # DG-LAB 命令处理器
-├── dglab_webui.py               # DG-LAB WebUI 控制面板
+├── dglab_webui.py               # CCDG WebUI 控制面板
 ├── dglab_user_store.py          # DG-LAB 用户存储
 ├── dglab_permission_store.py    # DG-LAB 权限存储
 ├── dglab_post_store.py          # DG-LAB 投稿广场存储
@@ -906,7 +940,7 @@ astrbot_plugin_currentcortex/
 - **DeviceStore** ([dglab_device_store.py](dglab_device_store.py))：用户-设备绑定关系持久化（线程安全）
 - **DeviceConnectionPool** ([dglab_connection_pool.py](dglab_connection_pool.py))：连接池，多用户并发 / 连接复用 / 自动重连 / 空闲清理
 - **DGLabCommandHandler** ([dglab_commands.py](dglab_commands.py))：命令解析 / 校验 / 执行 / 格式化
-- **DGLabWebUI** ([dglab_webui.py](dglab_webui.py))：浏览器远程控制面板
+- **DGLabWebUI** ([dglab_webui.py](dglab_webui.py))：CCDG WebUI 浏览器远程控制面板
 
 **主插件与记忆：**
 - **CurrentCortexPlugin(Star)** ([main.py](main.py))：主插件类，集成所有功能并注册命令
@@ -937,5 +971,5 @@ astrbot_plugin_currentcortex/
 
 ---
 
-**版本**：v1.8.5  
+**版本**：v1.9.0  
 **仓库**：[GitHub](https://github.com/backrooms-yrc/astrbot_plugin_currentcortex)

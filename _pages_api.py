@@ -1,0 +1,708 @@
+"""CurrentCortex 插件 Page 后端 API。
+
+所有路由以 ``/cc/`` 为前缀，通过 ``plugin.context.register_web_api`` 注册。
+Page 前端（pages/cc-dashboard）通过 ``window.AstrBotPluginPage`` 调用。
+
+约定：
+- 所有 handler 返回 ``json_response({...})``；异常统一 ``error_response``。
+- 配置写入走白名单（仅 ``_conf_schema.json`` 中存在的 key）。
+- 写配置后自动 ``save_config_async`` + ``star_manager.reload`` 热重载。
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import time
+from typing import Any, Dict, List
+
+from astrbot.api import logger
+from astrbot.api.web import error_response, json_response, request
+
+
+# ----------------------------------------------------------------------- #
+# 配置 schema 与白名单
+# ----------------------------------------------------------------------- #
+
+_CONFIG_SCHEMA: Dict[str, Dict[str, Any]] = {}
+_SCHEMA_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "_conf_schema.json"
+)
+
+
+def _load_schema() -> Dict[str, Dict[str, Any]]:
+    """惰性加载 _conf_schema.json，结果带类型/默认值/选项等元数据。"""
+    global _CONFIG_SCHEMA
+    if _CONFIG_SCHEMA:
+        return _CONFIG_SCHEMA
+    try:
+        with open(_SCHEMA_PATH, "r", encoding="utf-8") as f:
+            _CONFIG_SCHEMA = json.load(f)
+    except Exception as e:
+        logger.warning(f"[Pages] 加载 _conf_schema.json 失败: {e}")
+        _CONFIG_SCHEMA = {}
+    return _CONFIG_SCHEMA
+
+
+# 配置 key 分组（前端「设置」页用，key 必须存在于 schema）
+_CONFIG_GROUPS: List[Dict[str, Any]] = [
+    {
+        "key": "basic",
+        "title": "基础",
+        "icon": "settings",
+        "items": ["llm_tools_enable"],
+    },
+    {
+        "key": "pixiv",
+        "title": "Pixiv 图片",
+        "icon": "image",
+        "items": [
+            "default_r18",
+            "default_num",
+            "default_size",
+            "image_proxy",
+            "exclude_ai",
+            "request_timeout",
+        ],
+    },
+    {
+        "key": "jmcomic",
+        "title": "JMComic 漫画",
+        "icon": "book",
+        "items": ["jm_image_max_bytes", "jm_page_size"],
+    },
+    {
+        "key": "music",
+        "title": "网易云/酷狗 点歌",
+        "icon": "music",
+        "items": [
+            "music_file_max_bytes",
+            "music_cooldown",
+            "music_default_source",
+        ],
+    },
+    {
+        "key": "leiz",
+        "title": "LeiZ API 密钥",
+        "icon": "key",
+        "items": ["leiz_api_key"],
+    },
+    {
+        "key": "coyote",
+        "title": "DG-LAB（郊狼）",
+        "icon": "bolt",
+        "items": [
+            "dglab_server_url",
+            "dglab_heartbeat_interval",
+            "dglab_auto_connect",
+            "dglab_webui_enabled",
+            "dglab_webui_host",
+            "dglab_webui_port",
+        ],
+    },
+    {
+        "key": "cross_group",
+        "title": "跨群聊记忆",
+        "icon": "share",
+        "items": [
+            "cross_group_enable",
+            "cross_group_max_cnt",
+            "cross_group_inject_cnt",
+        ],
+    },
+    {
+        "key": "group_switch",
+        "title": "按群聊开关",
+        "icon": "switch",
+        "items": ["group_switch_enable", "group_switch_admin_only"],
+    },
+    {
+        "key": "reply_seg",
+        "title": "分段回复",
+        "icon": "scissors",
+        "items": [
+            "reply_seg_enable",
+            "reply_seg_only_llm",
+            "reply_seg_mention",
+            "reply_seg_mode",
+            "reply_seg_llm_provider_id",
+            "reply_seg_llm_density",
+            "reply_seg_llm_max_segments",
+            "reply_seg_llm_min_chars",
+            "reply_seg_llm_timeout",
+            "reply_seg_llm_max_tokens",
+            "reply_seg_split_symbols",
+            "reply_seg_split_words",
+            "reply_seg_merge_threshold",
+            "reply_seg_min_length",
+            "reply_seg_max_length",
+            "reply_seg_delay_range",
+        ],
+    },
+]
+
+
+# ----------------------------------------------------------------------- #
+# 工具方法
+# ----------------------------------------------------------------------- #
+
+
+def _meta_from_schema(key: str) -> Dict[str, Any]:
+    """从 schema 抽取 type/description/default/options/hint。"""
+    schema = _load_schema().get(key, {})
+    return {
+        "key": key,
+        "type": schema.get("type", "string"),
+        "default": schema.get("default"),
+        "options": schema.get("options"),
+        "hint": schema.get("hint", ""),
+        "description": schema.get("description", ""),
+    }
+
+
+def _coerce(key: str, raw: Any) -> Any:
+    """根据 schema 类型把字符串/前端表单值转为正确的 Python 类型。"""
+    schema = _load_schema().get(key, {})
+    typ = schema.get("type", "string")
+    if raw is None:
+        return schema.get("default")
+    try:
+        if typ == "bool":
+            if isinstance(raw, bool):
+                return raw
+            return str(raw).strip().lower() in ("1", "true", "yes", "on")
+        if typ == "int":
+            return int(raw)
+        if typ == "float":
+            return float(raw)
+        if typ == "string":
+            return str(raw)
+    except Exception:
+        return schema.get("default")
+    return raw
+
+
+async def _save_and_reload(plugin, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """白名单过滤 + 类型转换 + 写盘 + 热重载。
+
+    返回 ``{changed: [...], reloaded: bool}``。
+    """
+    schema = _load_schema()
+    changed: List[str] = []
+    for key, raw in payload.items():
+        if key not in schema:
+            continue
+        # 跳过未变化的值
+        try:
+            current = plugin.config.get(key)
+        except Exception:
+            current = None
+        new_val = _coerce(key, raw)
+        if current == new_val:
+            continue
+        plugin.config[key] = new_val
+        changed.append(key)
+    if not changed:
+        return {"changed": [], "reloaded": False}
+    # 写盘
+    save = getattr(plugin.config, "save_config_async", None)
+    if save is None:
+        save = getattr(plugin.config, "save_config", None)
+    if save is not None:
+        try:
+            res = save()
+            if hasattr(res, "__await__"):
+                await res
+        except Exception as e:
+            logger.warning(f"[Pages] save_config 失败: {e}")
+    # 热重载插件
+    reloaded = False
+    try:
+        star_manager = getattr(plugin.context, "star_manager", None)
+        if star_manager is not None and hasattr(star_manager, "reload"):
+            plugin_name = getattr(plugin, "name", None) or "astrbot_plugin_currentcortex"
+            try:
+                await star_manager.reload(plugin_name)
+                reloaded = True
+            except TypeError:
+                # 兼容旧签名 reload() 无参
+                await star_manager.reload()
+                reloaded = True
+    except Exception as e:
+        logger.warning(f"[Pages] star_manager.reload 失败: {e}")
+    return {"changed": changed, "reloaded": reloaded}
+
+
+# ----------------------------------------------------------------------- #
+# Handler：仪表板
+# ----------------------------------------------------------------------- #
+
+
+async def page_status(plugin):
+    """仪表板聚合状态：版本 / 运行时长 / 设备 / 用户 / 平台等。"""
+    try:
+        # 元数据
+        metadata = {}
+        meta_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "metadata.yaml"
+        )
+        try:
+            import yaml  # type: ignore
+            with open(meta_path, "r", encoding="utf-8") as f:
+                metadata = yaml.safe_load(f) or {}
+        except Exception:
+            # fallback：手取 version/name
+            try:
+                with open(meta_path, "r", encoding="utf-8") as f:
+                    txt = f.read()
+                import re as _re
+                m = _re.search(r"^version:\s*(.+)$", txt, _re.M)
+                if m:
+                    metadata["version"] = m.group(1).strip()
+                m = _re.search(r"^name:\s*(.+)$", txt, _re.M)
+                if m:
+                    metadata["name"] = m.group(1).strip()
+                m = _re.search(r"^author:\s*(.+)$", txt, _re.M)
+                if m:
+                    metadata["author"] = m.group(1).strip()
+            except Exception:
+                metadata = {}
+
+        # 设备数
+        device_count = 0
+        try:
+            device_store = getattr(plugin, "_device_store", None)
+            if device_store is not None and hasattr(device_store, "count"):
+                device_count = int(device_store.count() or 0)
+        except Exception:
+            pass
+
+        # 活跃连接
+        active_conn = 0
+        error_count = 0
+        try:
+            pool = getattr(plugin, "_connection_pool", None)
+            if pool is not None:
+                if hasattr(pool, "get_active_count"):
+                    active_conn = int(pool.get_active_count() or 0)
+                if hasattr(pool, "error_count"):
+                    error_count = int(pool.error_count or 0)
+        except Exception:
+            pass
+
+        # 用户数
+        user_count = 0
+        try:
+            user_store = getattr(plugin, "_user_store", None)
+            if user_store is not None:
+                if hasattr(user_store, "count_all_users"):
+                    user_count = int(user_store.count_all_users() or 0)
+                elif hasattr(user_store, "list_users"):
+                    user_count = len(user_store.list_users() or [])
+        except Exception:
+            pass
+
+        # 配置开关状态
+        cfg = {}
+        for key in [
+            "llm_tools_enable",
+            "dglab_webui_enabled",
+            "dglab_auto_connect",
+            "cross_group_enable",
+            "group_switch_enable",
+            "reply_seg_enable",
+        ]:
+            try:
+                cfg[key] = bool(plugin.config.get(key, False))
+            except Exception:
+                cfg[key] = False
+
+        started_at = float(getattr(plugin, "_started_at", time.time()))
+        uptime_sec = int(time.time() - started_at)
+
+        return json_response(
+            {
+                "metadata": metadata,
+                "started_at": started_at,
+                "uptime_sec": uptime_sec,
+                "device_count": device_count,
+                "active_connections": active_conn,
+                "error_count": error_count,
+                "user_count": user_count,
+                "feature_flags": cfg,
+            }
+        )
+    except Exception as e:
+        logger.error(f"[Pages] /cc/status 失败: {e}", exc_info=True)
+        return error_response(f"状态获取失败: {e}", status_code=500)
+
+
+# ----------------------------------------------------------------------- #
+# Handler：配置读写
+# ----------------------------------------------------------------------- #
+
+
+async def page_get_config(plugin):
+    """读取分组后的配置 schema + 当前值。"""
+    try:
+        schema = _load_schema()
+        groups: List[Dict[str, Any]] = []
+        for g in _CONFIG_GROUPS:
+            items = []
+            for k in g["items"]:
+                if k not in schema:
+                    continue
+                meta = _meta_from_schema(k)
+                try:
+                    meta["value"] = plugin.config.get(k)
+                except Exception:
+                    meta["value"] = meta.get("default")
+                items.append(meta)
+            if items:
+                groups.append({"key": g["key"], "title": g["title"], "icon": g["icon"], "items": items})
+        return json_response({"groups": groups})
+    except Exception as e:
+        logger.error(f"[Pages] /cc/config GET 失败: {e}", exc_info=True)
+        return error_response(f"读取配置失败: {e}", status_code=500)
+
+
+async def page_save_config(plugin):
+    """保存配置并触发热重载。body: {key: value, ...}。"""
+    try:
+        payload = await request.json(default={}) or {}
+        if not isinstance(payload, dict):
+            return error_response("请求体必须是 JSON 对象", status_code=400)
+        result = await _save_and_reload(plugin, payload)
+        return json_response(
+            {
+                "ok": True,
+                "changed": result["changed"],
+                "reloaded": result["reloaded"],
+                "message": "已保存" + ("并热重载" if result["reloaded"] else ""),
+            }
+        )
+    except Exception as e:
+        logger.error(f"[Pages] /cc/config POST 失败: {e}", exc_info=True)
+        return error_response(f"保存配置失败: {e}", status_code=500)
+
+
+# ----------------------------------------------------------------------- #
+# Handler：郊狼（CCDG WebUI）
+# ----------------------------------------------------------------------- #
+
+
+async def page_coyote_info(plugin):
+    """返回郊狼 WebUI 当前状态：是否启用 / host / port / 进程 / 连接数。"""
+    try:
+        webui = getattr(plugin, "_dglab_webui", None)
+        running = bool(webui is not None and webui._site is not None)
+        host = str(plugin.config.get("dglab_webui_host", "127.0.0.1"))
+        port = int(plugin.config.get("dglab_webui_port", 9178))
+        enabled = bool(plugin.config.get("dglab_webui_enabled", False))
+        is_public = host in ("0.0.0.0", "::")
+        local_url = f"http://{'localhost' if host in ('0.0.0.0', '127.0.0.1') else host}:{port}"
+        return json_response(
+            {
+                "enabled": enabled,
+                "running": running,
+                "host": host,
+                "port": port,
+                "is_public": is_public,
+                "local_url": local_url,
+            }
+        )
+    except Exception as e:
+        logger.error(f"[Pages] /cc/coyote/info 失败: {e}", exc_info=True)
+        return error_response(f"获取郊狼状态失败: {e}", status_code=500)
+
+
+async def page_coyote_public_ip(plugin):
+    """主动探测本机公网 IPv4。"""
+    try:
+        ip = await plugin.get_public_ip()
+        return json_response({"ip": ip})
+    except Exception as e:
+        logger.error(f"[Pages] /cc/coyote/public_ip 失败: {e}", exc_info=True)
+        return error_response(f"获取公网 IP 失败: {e}", status_code=500)
+
+
+async def page_coyote_enable(plugin):
+    """启用 CCDG WebUI 总开关。
+
+    仅打开 WebUI，监听地址保持当前配置（默认 127.0.0.1，只本机可访问，
+    不视为暴露公网）。
+    """
+    try:
+        payload = await request.json(default={}) or {}
+        port = int(payload.get("port") or plugin.config.get("dglab_webui_port", 9178))
+        host = str(payload.get("host") or plugin.config.get("dglab_webui_host", "127.0.0.1"))
+        result = await _save_and_reload(
+            plugin,
+            {"dglab_webui_enabled": True, "dglab_webui_host": host, "dglab_webui_port": port},
+        )
+        is_public = host in ("0.0.0.0", "::")
+        return json_response(
+            {
+                "ok": True,
+                "changed": result["changed"],
+                "reloaded": result["reloaded"],
+                "host": host,
+                "port": port,
+                "is_public": is_public,
+                "local_url": f"http://{'localhost' if host in ('0.0.0.0', '127.0.0.1') else host}:{port}",
+                "message": "已启用（监听 127.0.0.1，仅本机可访问）" if not is_public else f"已启用（监听 {host}，公网可访问！）",
+            }
+        )
+    except Exception as e:
+        logger.error(f"[Pages] /cc/coyote/enable 失败: {e}", exc_info=True)
+        return error_response(f"启用郊狼 WebUI 失败: {e}", status_code=500)
+
+
+async def page_coyote_disable(plugin):
+    """关闭 CCDG WebUI 总开关。
+
+    关闭时把监听地址一并恢复为 127.0.0.1，避免残留 0.0.0.0 暴露配置。
+    """
+    try:
+        result = await _save_and_reload(
+            plugin,
+            {"dglab_webui_enabled": False, "dglab_webui_host": "127.0.0.1"},
+        )
+        return json_response(
+            {
+                "ok": True,
+                "changed": result["changed"],
+                "reloaded": result["reloaded"],
+                "message": "已关闭 CCDG WebUI",
+            }
+        )
+    except Exception as e:
+        logger.error(f"[Pages] /cc/coyote/disable 失败: {e}", exc_info=True)
+        return error_response(f"关闭郊狼 WebUI 失败: {e}", status_code=500)
+
+
+async def page_coyote_expose(plugin):
+    """暴露公网开关：打开后监听 0.0.0.0，自动探测公网 IP 并返回跳转链接。
+
+    若 WebUI 尚未启用，会一并自动启用（因为暴露的前提是 WebUI 在运行）。
+    """
+    try:
+        payload = await request.json(default={}) or {}
+        port = int(payload.get("port") or plugin.config.get("dglab_webui_port", 9178))
+        host = str(payload.get("host") or "0.0.0.0")
+        result = await _save_and_reload(
+            plugin,
+            {
+                "dglab_webui_enabled": True,
+                "dglab_webui_host": host,
+                "dglab_webui_port": port,
+            },
+        )
+        ip = await plugin.get_public_ip()
+        if host in ("0.0.0.0", "::"):
+            logger.warning(
+                "[Pages] ⚠️ 郊狼 WebUI 已暴露公网（%s:%s）！"
+                "请确保已配置反代 + 鉴权。",
+                host,
+                port,
+            )
+        url = f"http://{ip}:{port}"
+        return json_response(
+            {
+                "ok": True,
+                "changed": result["changed"],
+                "reloaded": result["reloaded"],
+                "ip": ip,
+                "host": host,
+                "port": port,
+                "url": url,
+                "warning": "已暴露公网，请务必配置反向代理与访问控制！",
+            }
+        )
+    except Exception as e:
+        logger.error(f"[Pages] /cc/coyote/expose 失败: {e}", exc_info=True)
+        return error_response(f"暴露公网失败: {e}", status_code=500)
+
+
+async def page_coyote_unexpose(plugin):
+    """关闭暴露公网开关：监听恢复 127.0.0.1，WebUI 总开关状态保留。"""
+    try:
+        result = await _save_and_reload(
+            plugin,
+            {"dglab_webui_host": "127.0.0.1"},
+        )
+        return json_response(
+            {
+                "ok": True,
+                "changed": result["changed"],
+                "reloaded": result["reloaded"],
+                "message": "已取消公网暴露，恢复本机监听",
+            }
+        )
+    except Exception as e:
+        logger.error(f"[Pages] /cc/coyote/unexpose 失败: {e}", exc_info=True)
+        return error_response(f"取消公网暴露失败: {e}", status_code=500)
+
+
+# ----------------------------------------------------------------------- #
+# Handler：帮助中心
+# ----------------------------------------------------------------------- #
+
+
+_HELP_DOCS: List[Dict[str, Any]] = [
+    {
+        "category": "快速开始",
+        "items": [
+            {
+                "q": "如何获取 Pixiv 图片？",
+                "a": "发送 /pixiv（默认配置），或 /pixiv tag=风景 r18=0 num=3。也可 /femboy 获取随机男娘图。",
+            },
+            {
+                "q": "如何点歌？",
+                "a": "发送 /点歌 关键词 或 /music 关键词。默认走 auto 音源（网易云→酷狗）；/音源 可切换。",
+            },
+            {
+                "q": "如何看 JMComic 漫画？",
+                "a": "/jm 关键词 搜索；/jm ID 查看详情；/jm ID 章节号 阅读。整章超过 jm_page_size 张时按 /jm con 续看。",
+            },
+            {
+                "q": "如何解析小红书 / B站 / 抖音链接？",
+                "a": "发送 /解析 <URL>，或直接 /xhs <URL>、/bilibili <URL>。自动识别链接中的视频/图文。",
+            },
+        ],
+    },
+    {
+        "category": "郊狼 DG-LAB",
+        "items": [
+            {
+                "q": "如何绑定郊狼设备？",
+                "a": "1. 设置 dglab_server_url（如 ws://192.168.1.100:9999）并开启 dglab_auto_connect；"
+                     "2. /dglab bind，或在群聊里给机器人发 /dglab bind；"
+                     "3. 用郊狼 APP「APP 局域网连接」扫描 QR 码绑定。",
+            },
+            {
+                "q": "CCDG WebUI 是什么？",
+                "a": "浏览器端的远程控制面板：在网页里调节波形/强度/查看设备状态。默认关闭，需在设置页打开总开关后访问。",
+            },
+            {
+                "q": "开启公网暴露有什么风险？",
+                "a": "0.0.0.0 监听会让任何人都能访问 WebUI 的注册/登录/设备接口。"
+                     "必须前面挂反代 + 鉴权（推荐 Cloudflare Zero Trust、Caddy + BasicAuth、Nginx + IP 白名单）。"
+                     "本插件的 Pages「郊狼控制」开关会自动写 0.0.0.0 并给出公网 IP，"
+                     "但具体安全由用户自己负责。",
+            },
+        ],
+    },
+    {
+        "category": "分段回复",
+        "items": [
+            {
+                "q": "分段回复和 AstrBot 框架的分段冲突吗？",
+                "a": "会。本插件的 reply_seg_enable 与框架 platform_settings.segmented_reply 二选一，"
+                     "同时开会导致重复分段。",
+            },
+            {
+                "q": "llm 模式很慢怎么办？",
+                "a": "缩短原文长度、增加 reply_seg_llm_min_chars、选更快的 reply_seg_llm_provider_id、"
+                     "或切换到 punct 模式（零额外消耗）。",
+            },
+            {
+                "q": "如何自定义切分词？",
+                "a": "修改 reply_seg_split_words（空格分隔多个词），词保留在段尾。建议只放多字符词。",
+            },
+        ],
+    },
+    {
+        "category": "跨群聊记忆",
+        "items": [
+            {
+                "q": "跨群聊记忆会把其他群的内容发给 LLM 吗？",
+                "a": "是。开启 cross_group_enable 后，所有群聊共享记忆并注入 LLM 上下文。"
+                     "请评估是否符合隐私预期。",
+            },
+            {
+                "q": "如何限制记忆长度？",
+                "a": "cross_group_max_cnt 控制总条数（建议 200~1000）；"
+                     "cross_group_inject_cnt 控制每次注入条数（建议 10~50）。",
+            },
+        ],
+    },
+    {
+        "category": "故障排查",
+        "items": [
+            {
+                "q": "保存配置后插件无变化？",
+                "a": "本页保存会自动调 star_manager.reload() 热重载。若仍然无效，"
+                     "请检查 AstrBot 控制台日志是否有 reload 失败提示。",
+            },
+            {
+                "q": "郊狼开关打开但仪表板仍显示「未运行」？",
+                "a": "热重载需要 1~3 秒，请等待后刷新；如仍未运行，检查 dglab_webui_port 是否被占用。",
+            },
+            {
+                "q": "无法访问公网链接？",
+                "a": "公网 IP 探测依赖 api.ipify.org。如该服务不可达，本插件会回落到本机出口 IP，"
+                     "但若机器本身无公网 IP（如 NAT 后），需自行配置 DDNS / 内网穿透（frp、Cloudflare Tunnel 等）。",
+            },
+        ],
+    },
+]
+
+
+async def page_help(plugin):
+    """返回帮助文档（Q&A + 命令速查）。"""
+    try:
+        return json_response({"docs": _HELP_DOCS})
+    except Exception as e:
+        logger.error(f"[Pages] /cc/help 失败: {e}", exc_info=True)
+        return error_response(f"加载帮助失败: {e}", status_code=500)
+
+
+# ----------------------------------------------------------------------- #
+# 注册入口
+# ----------------------------------------------------------------------- #
+
+
+def _make_handler(fn, plugin):
+    """把 handler 绑定到插件实例。
+
+    AstrBot 框架以 ``view_handler(**path_values)`` 形式调用注册的 handler
+    （路由无动态参数时 path_values 为空），故这里用闭包把 ``plugin`` 绑定进去，
+    handler 本体签名保持 ``async def fn(plugin)``。
+    """
+
+    async def _wrapper(**kwargs):
+        return await fn(plugin, **kwargs)
+
+    return _wrapper
+
+
+def register_routes(plugin) -> None:
+    """注册全部 Page API 路由。重复调用幂等（AstrBot 会原地替换）。
+
+    注意：路由必须包含插件名前缀（如 /astrbot_plugin_currentcortex/cc/status），
+    因为前端 bridge 调用 ``apiGet("cc/status")`` 时，实际请求路径为
+    ``/api/v1/plugins/extensions/<插件名>/cc/status``。
+    """
+    prefix = getattr(plugin, "name", None) or "astrbot_plugin_currentcortex"
+    routes = [
+        (f"/{prefix}/cc/status", page_status, ["GET"], "仪表板状态"),
+        (f"/{prefix}/cc/config", page_get_config, ["GET"], "读取插件配置"),
+        (f"/{prefix}/cc/config", page_save_config, ["POST"], "保存插件配置（热重载）"),
+        (f"/{prefix}/cc/coyote/info", page_coyote_info, ["GET"], "郊狼 WebUI 状态"),
+        (f"/{prefix}/cc/coyote/public_ip", page_coyote_public_ip, ["GET"], "探测本机公网 IP"),
+        (f"/{prefix}/cc/coyote/enable", page_coyote_enable, ["POST"], "启用郊狼 WebUI"),
+        (f"/{prefix}/cc/coyote/disable", page_coyote_disable, ["POST"], "关闭郊狼 WebUI"),
+        (f"/{prefix}/cc/coyote/expose", page_coyote_expose, ["POST"], "暴露郊狼 WebUI 公网"),
+        (f"/{prefix}/cc/coyote/unexpose", page_coyote_unexpose, ["POST"], "取消郊狼 WebUI 公网暴露"),
+        (f"/{prefix}/cc/help", page_help, ["GET"], "帮助中心文档"),
+    ]
+    for route, handler, methods, desc in routes:
+        try:
+            plugin.context.register_web_api(
+                route, _make_handler(handler, plugin), methods, desc
+            )
+            logger.debug(f"[Pages] 注册 {methods} {route}")
+        except Exception as e:
+            logger.warning(f"[Pages] 注册 {route} 失败: {e}")
+    logger.info(f"[Pages] 已注册 {len(routes)} 个 Page API 路由")

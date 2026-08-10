@@ -1361,7 +1361,7 @@ _JM_CHAPTER_CURSOR_TTL = 30 * 60
     "astrbot_plugin_currentcortex",
     "Rcst20",
     "多功能 AstrBot 插件（CurrentCortex）—— Pixiv 随机图片 ·网易云点歌 ·JMComic 漫画 ·小红书/B站/抖音媒体解析 ·每日一言 ·天气 ·男娘 ·DG-LAB（郊狼） 设备管理 ·跨群聊记忆 ·按群聊开关。基于 LeiZ API。",
-    "1.5.8",
+    "1.9.0",
 )
 class CurrentCortexPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -1524,7 +1524,7 @@ class CurrentCortexPlugin(Star):
             # 安全：监听 0.0.0.0 表示暴露到公网，明确告警
             if webui_host in ("0.0.0.0", "::"):
                 logger.warning(
-                    "[CurrentCortex] ⚠️ WebUI 监听地址为 %s，将暴露到公网！"
+                    "[CCDG] ⚠️ WebUI 监听地址为 %s，将暴露到公网！"
                     "请确保已配置反向代理与访问控制，否则任何人都能访问注册/登录等接口。",
                     webui_host,
                 )
@@ -1538,7 +1538,7 @@ class CurrentCortexPlugin(Star):
             )
         else:
             logger.info(
-                "[CurrentCortex] WebUI 未启用（默认关闭）。如需启用，请在配置中开启 "
+                "[CCDG] WebUI 未启用（默认关闭）。如需启用，请在配置中开启 "
                 "dglab_webui_enabled，并注意 WebUI 安全（建议仅本地或经反代+鉴权后公网访问）。"
             )
 
@@ -1665,6 +1665,17 @@ class CurrentCortexPlugin(Star):
                 f"[ReplySeg] 已启用分段回复（mode={self._reply_seg_mode}, "
                 f"only_llm={self._reply_seg_only_llm}, delay={self._reply_seg_delay_range}）"
             )
+
+        # 持有 config 引用：Page API（设置页）需要运行时写回并触发热重载。
+        self.config = config
+        # 记录启动时间（用于仪表板「运行时长」）
+        self._started_at = time.time()
+        # 注册 Page 后端 API（仪表板 / 设置 / 郊狼 / 帮助 / 联系）
+        try:
+            from . import _pages_api
+            _pages_api.register_routes(self)
+        except Exception as e:
+            logger.warning(f"[Pages] 路由注册失败: {e}")
 
     @staticmethod
     def _parse_delay_range(raw: str) -> tuple:
@@ -5156,11 +5167,56 @@ class CurrentCortexPlugin(Star):
             return f"{num / 10000:.1f}万"
         return str(num)
 
+    async def get_public_ip(self, timeout: float = 5.0) -> str:
+        """探测本机公网 IPv4。
+
+        顺序：api.ipify.org → ip.sb → api.ipify.org over IPv6 → socket 推断的本机出口 IP。
+        全部失败时返回 ``127.0.0.1``。仅供 Pages 展示跳转链接使用，
+        不参与安全决策（任何公网监听都需用户自行配置反代 + 鉴权）。
+        """
+        import socket as _socket
+        endpoints = [
+            ("https://api.ipify.org", None),
+            ("https://api.ipify.org?format=json", None),
+            ("https://ip.sb", None),
+        ]
+        for url, _ in endpoints:
+            try:
+                async with aiohttp.ClientSession(
+                    timeout=aiohttp.ClientTimeout(total=timeout),
+                ) as session:
+                    async with session.get(url) as resp:
+                        if resp.status != 200:
+                            continue
+                        text = (await resp.text()).strip()
+                        # json 形式 {"ip": "1.2.3.4"} 或纯文本
+                        try:
+                            data = json.loads(text)
+                            ip = data.get("ip") or text
+                        except Exception:
+                            ip = text
+                        # 取首个 IPv4
+                        for token in ip.replace(",", " ").split():
+                            if ":" not in token and token.count(".") == 3:
+                                return token
+            except Exception:
+                continue
+        # 兜底：通过 UDP socket 让内核挑出口网卡，得到本机 IP
+        try:
+            sock = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+            try:
+                sock.connect(("8.8.8.8", 80))
+                return sock.getsockname()[0]
+            finally:
+                sock.close()
+        except Exception:
+            return "127.0.0.1"
+
     async def terminate(self):
         logger.info("CurrentCortexPlugin is being terminated")
         if hasattr(self, "_dglab_webui") and self._dglab_webui:
             await self._dglab_webui.stop()
-            logger.info("✅ CurrentCortex WebUI 已停止")
+            logger.info("✅ CCDG WebUI 已停止")
         if hasattr(self, "_connection_pool"):
             await self._connection_pool.stop()
             logger.info("✅ CurrentCortex 连接池已停止")

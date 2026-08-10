@@ -1,4 +1,4 @@
-"""CurrentCortex WebUI 控制界面
+"""CCDG WebUI 控制界面
 
 提供基于浏览器的设备控制面板，通过 aiohttp.web 实现 HTTP 服务器。
 包含用户认证、设备隔离、权限控制功能。

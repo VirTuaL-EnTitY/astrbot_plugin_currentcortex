@@ -2972,7 +2972,7 @@ class CurrentCortexPlugin(Star):
         logger.info("CurrentCortexPlugin is being terminated")
         if hasattr(self, "_dglab_webui") and self._dglab_webui:
             await self._dglab_webui.stop()
-            logger.info("✅ CurrentCortex WebUI 已停止")
+            logger.info("✅ CCDG WebUI 已停止")
         if hasattr(self, "_connection_pool"):
             await self._connection_pool.stop()
             logger.info("✅ CurrentCortex 连接池已停止")

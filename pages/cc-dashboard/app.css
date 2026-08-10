@@ -1,0 +1,545 @@
+/* ============================================================ *
+ * CurrentCortex 总Pages —— mdui 2 主题：晴空蓝 + 雪雾白
+ * 通过覆盖 mdui 的 Material Design 3 设计令牌实现
+ * ============================================================ */
+
+/* ---------------- 图标字体（本地，无外网依赖） ---------------- */
+@font-face {
+  font-family: "Material Icons";
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url("./vendor/fonts/material-icons.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Material Icons Outlined";
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url("./vendor/fonts/material-icons-outlined.woff2") format("woff2");
+}
+
+/* ---------------- 主题：晴空蓝（#4AA8D8 系）+ 雪雾白（#F0F8FF） ---------------- */
+:root {
+  /* 主色：晴空蓝 */
+  --mdui-color-primary-light: 74, 168, 216;
+  --mdui-color-on-primary-light: 255, 255, 255;
+  --mdui-color-primary-container-light: 216, 241, 251;
+  --mdui-color-on-primary-container-light: 13, 52, 76;
+  --mdui-color-inverse-primary-light: 74, 168, 216;
+
+  /* 辅助色 */
+  --mdui-color-secondary-light: 91, 140, 170;
+  --mdui-color-secondary-container-light: 216, 236, 248;
+  --mdui-color-on-secondary-light: 255, 255, 255;
+  --mdui-color-on-secondary-container-light: 13, 52, 76;
+  --mdui-color-tertiary-light: 96, 125, 139;
+  --mdui-color-tertiary-container-light: 207, 233, 244;
+
+  /* 表面：雪雾白 */
+  --mdui-color-surface-light: 240, 248, 255;
+  --mdui-color-surface-dim-light: 222, 235, 246;
+  --mdui-color-surface-bright-light: 255, 255, 255;
+  --mdui-color-surface-container-lowest-light: 255, 255, 255;
+  --mdui-color-surface-container-low-light: 238, 247, 253;
+  --mdui-color-surface-container-light: 231, 243, 252;
+  --mdui-color-surface-container-high-light: 224, 238, 249;
+  --mdui-color-surface-container-highest-light: 217, 233, 245;
+  --mdui-color-surface-variant-light: 224, 237, 246;
+  --mdui-color-on-surface-light: 31, 58, 82;
+  --mdui-color-on-surface-variant-light: 91, 122, 149;
+  --mdui-color-inverse-surface-light: 31, 58, 82;
+  --mdui-color-inverse-on-surface-light: 240, 248, 255;
+
+  /* 背景 */
+  --mdui-color-background-light: 240, 248, 255;
+  --mdui-color-on-background-light: 31, 58, 82;
+
+  /* 错误/轮廓 */
+  --mdui-color-error-light: 179, 38, 30;
+  --mdui-color-error-container-light: 249, 222, 220;
+  --mdui-color-on-error-light: 255, 255, 255;
+  --mdui-color-outline-light: 170, 200, 220;
+  --mdui-color-outline-variant-light: 214, 232, 243;
+  --mdui-color-surface-tint-color-light: 74, 168, 216;
+}
+
+/* ---------------- 布局 ---------------- */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  font-family: "PingFang SC", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+  display: flex;
+  flex-direction: column;
+}
+
+#app {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* Vue 挂载前隐藏模板，避免闪烁 */
+[v-cloak] {
+  display: none;
+}
+
+.cc-layout {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+/* ---------------- 侧边导航 ---------------- */
+.cc-side {
+  width: 220px;
+  flex-shrink: 0;
+  border-right: 1px solid rgb(var(--mdui-color-outline-variant));
+  background: rgb(var(--mdui-color-surface-container-low));
+  padding: 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cc-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+}
+
+.cc-brand-icon {
+  font-size: 26px;
+  color: rgb(var(--mdui-color-primary));
+}
+
+.cc-brand-name {
+  font-size: 17px;
+  font-weight: 600;
+  color: rgb(var(--mdui-color-on-surface));
+  letter-spacing: 0.3px;
+}
+
+.cc-nav-list {
+  --mdui-list-item-container-shape: var(--mdui-shape-corner-medium);
+}
+
+.cc-nav-list mdui-list-item {
+  --mdui-list-item-container-color: transparent;
+  --mdui-list-item-label-text-color: rgb(var(--mdui-color-on-surface-variant));
+}
+
+.cc-nav-list mdui-list-item[active] {
+  --mdui-list-item-container-color: rgb(var(--mdui-color-primary-container));
+  --mdui-list-item-label-text-color: rgb(var(--mdui-color-on-primary-container));
+  --mdui-list-item-leading-icon-color: rgb(var(--mdui-color-primary));
+}
+
+/* ---------------- 主内容 ---------------- */
+.cc-main {
+  flex: 1;
+  padding: 28px 36px;
+  overflow-y: auto;
+  min-width: 0;
+  background: rgb(var(--mdui-color-background));
+}
+
+.cc-section {
+  max-width: 920px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.cc-head h1 {
+  font-size: 24px;
+  font-weight: 500;
+  color: rgb(var(--mdui-color-on-background));
+  margin: 0;
+}
+
+.cc-head p {
+  margin-top: 4px;
+  color: rgb(var(--mdui-color-on-surface-variant));
+  font-size: 14px;
+}
+
+/* ---------------- 卡片 ---------------- */
+.cc-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 14px;
+}
+
+.cc-card {
+  --mdui-card-container-color: rgb(var(--mdui-color-surface-container-lowest));
+  padding: 16px 18px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.cc-card-icon {
+  font-size: 28px;
+  color: rgb(var(--mdui-color-primary));
+}
+
+.cc-card-value {
+  font-size: 22px;
+  font-weight: 600;
+  color: rgb(var(--mdui-color-primary));
+  line-height: 1.2;
+}
+
+.cc-card-label {
+  font-size: 12.5px;
+  color: rgb(var(--mdui-color-on-surface-variant));
+  margin-top: 2px;
+}
+
+/* ---------------- 面板 ---------------- */
+.cc-panel {
+  --mdui-card-container-color: rgb(var(--mdui-color-surface-container-lowest));
+  padding: 20px 24px;
+}
+
+.cc-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 500;
+  color: rgb(var(--mdui-color-on-surface));
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px dashed rgb(var(--mdui-color-outline-variant));
+}
+
+.cc-panel-icon {
+  font-size: 20px;
+  color: rgb(var(--mdui-color-primary));
+}
+
+/* ---------------- 表格 ---------------- */
+.mdui-table table {
+  font-size: 14px;
+}
+
+.mdui-table td:first-child {
+  width: 130px;
+  font-weight: 500;
+  color: rgb(var(--mdui-color-on-surface-variant));
+}
+
+/* ---------------- 功能开关标签 ---------------- */
+.cc-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cc-flags mdui-chip {
+  --mdui-chip-container-color: rgb(var(--mdui-color-surface-container));
+  --mdui-chip-label-text-color: rgb(var(--mdui-color-on-surface-variant));
+}
+
+.cc-flags mdui-chip[selected] {
+  --mdui-chip-container-color: rgb(var(--mdui-color-primary-container));
+  --mdui-chip-label-text-color: rgb(var(--mdui-color-on-primary-container));
+}
+
+/* ---------------- 帮助 Q&A ---------------- */
+.cc-qa {
+  margin-bottom: 8px;
+}
+
+.cc-qa details {
+  border: 1px solid rgb(var(--mdui-color-outline-variant));
+  border-radius: var(--mdui-shape-corner-medium);
+  background: rgb(var(--mdui-color-surface-container-low));
+  overflow: hidden;
+}
+
+.cc-qa summary {
+  cursor: pointer;
+  padding: 12px 16px;
+  font-size: 14px;
+  font-weight: 500;
+  color: rgb(var(--mdui-color-on-surface));
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  user-select: none;
+}
+
+.cc-qa summary::-webkit-details-marker {
+  display: none;
+}
+
+.cc-qa summary:hover {
+  background: rgb(var(--mdui-color-surface-container));
+}
+
+.cc-qa-icon {
+  font-size: 18px;
+  color: rgb(var(--mdui-color-primary));
+  flex-shrink: 0;
+}
+
+.cc-qa-arrow {
+  margin-left: auto;
+  font-size: 20px;
+  color: rgb(var(--mdui-color-on-surface-variant));
+  transition: transform 0.2s;
+}
+
+.cc-qa details[open] .cc-qa-arrow {
+  transform: rotate(180deg);
+}
+
+.cc-qa-a {
+  padding: 12px 16px;
+  border-top: 1px dashed rgb(var(--mdui-color-outline-variant));
+  font-size: 13.5px;
+  color: rgb(var(--mdui-color-on-surface-variant));
+  line-height: 1.8;
+}
+
+/* ---------------- 设置表单 ---------------- */
+.cc-form-row {
+  display: flex;
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid rgb(var(--mdui-color-outline-variant));
+  align-items: flex-start;
+}
+
+.cc-form-row:last-child {
+  border-bottom: none;
+}
+
+.cc-form-label {
+  flex-shrink: 0;
+  width: 240px;
+  min-width: 0;
+}
+
+.cc-form-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: rgb(var(--mdui-color-on-surface));
+  word-break: break-all;
+}
+
+.cc-form-key {
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: rgb(var(--mdui-color-on-surface-variant));
+  word-break: break-all;
+  opacity: 0.8;
+}
+
+.cc-form-ctrl {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.cc-form-ctrl mdui-text-field {
+  width: 100%;
+  max-width: 460px;
+  --mdui-text-field-container-color: rgb(var(--mdui-color-surface-container-low));
+}
+
+.cc-form-ctrl mdui-select {
+  width: 100%;
+  max-width: 460px;
+  --mdui-select-container-color: rgb(var(--mdui-color-surface-container-low));
+}
+
+.cc-form-hint {
+  font-size: 12.5px;
+  color: rgb(var(--mdui-color-on-surface-variant));
+  line-height: 1.7;
+  max-width: 560px;
+}
+
+.cc-save-bar {
+  display: flex;
+  justify-content: flex-end;
+  position: sticky;
+  bottom: 0;
+  padding: 14px 0;
+  background: linear-gradient(180deg, transparent, rgb(var(--mdui-color-background)) 45%);
+  z-index: 1;
+}
+
+/* ---------------- 郊狼 ---------------- */
+.cc-coyote-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.cc-coyote-state {
+  font-size: 18px;
+  font-weight: 600;
+  color: rgb(var(--mdui-color-error));
+}
+
+.cc-coyote-state.on {
+  color: rgb(46, 158, 91);
+}
+
+.cc-coyote-desc {
+  margin-top: 4px;
+  font-size: 13px;
+  color: rgb(var(--mdui-color-on-surface-variant));
+  line-height: 1.7;
+  max-width: 560px;
+}
+
+.cc-coyote-warn {
+  margin-top: 14px;
+  padding: 12px 16px;
+  border-radius: var(--mdui-shape-corner-medium);
+  background: rgb(var(--mdui-color-error-container));
+  color: rgb(var(--mdui-color-on-error-container));
+  font-size: 13.5px;
+  line-height: 1.8;
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.cc-warn-icon {
+  font-size: 20px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.cc-coyote-link-row {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.cc-coyote-link-label {
+  font-size: 13px;
+  color: rgb(var(--mdui-color-on-surface-variant));
+  width: 72px;
+  flex-shrink: 0;
+}
+
+.cc-coyote-busy {
+  margin-top: 14px;
+  color: rgb(var(--mdui-color-primary));
+  font-size: 13px;
+  animation: cc-pulse 1.2s infinite;
+}
+
+@keyframes cc-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* ---------------- 联系我们 ---------------- */
+.cc-contact-group {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.cc-contact-qq {
+  font-size: 22px;
+  font-weight: 600;
+  color: rgb(var(--mdui-color-primary));
+  letter-spacing: 1px;
+}
+
+.cc-contact-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.cc-contact-tip {
+  font-size: 12.5px;
+  color: rgb(var(--mdui-color-on-surface-variant));
+  line-height: 1.7;
+}
+
+/* ---------------- 加载 ---------------- */
+.cc-loading {
+  padding: 48px;
+  text-align: center;
+  color: rgb(var(--mdui-color-on-surface-variant));
+  font-size: 14px;
+}
+
+/* ---------------- 底部（始终显示） ---------------- */
+.cc-footer {
+  flex-shrink: 0;
+  padding: 12px 16px;
+  text-align: center;
+  font-size: 12.5px;
+  color: rgb(var(--mdui-color-on-surface-variant));
+  background: rgb(var(--mdui-color-surface-container-low));
+  border-top: 1px solid rgb(var(--mdui-color-outline-variant));
+}
+
+/* ---------------- 响应式 ---------------- */
+@media (max-width: 720px) {
+  .cc-layout {
+    flex-direction: column;
+  }
+  .cc-side {
+    width: 100%;
+    flex-direction: row;
+    align-items: center;
+    overflow-x: auto;
+    padding: 10px;
+    border-right: none;
+    border-bottom: 1px solid rgb(var(--mdui-color-outline-variant));
+  }
+  .cc-brand {
+    display: none;
+  }
+  .cc-nav-list {
+    flex-direction: row;
+  }
+  .cc-nav-list mdui-list-item {
+    white-space: nowrap;
+  }
+  .cc-main {
+    padding: 18px 14px;
+  }
+  .cc-form-row {
+    flex-direction: column;
+    gap: 6px;
+  }
+  .cc-form-label {
+    width: auto;
+  }
+}
