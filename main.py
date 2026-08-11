@@ -2340,9 +2340,17 @@ class CurrentCortexPlugin(Star):
                 return
 
             # llm 模式：先尝试大模型语义分段；太短、失败或只切出 1 段则降级规则分段。
+            # 降级时强制用 length 模式（有段长控制），避免 punct 把长文本切成几十段。
             segments: Optional[List[str]] = None
             if self._reply_seg_mode == "llm":
                 segments = await self._segment_by_llm(raw_text, event)
+                if not segments:
+                    # LLM 失败 → length 兜底（而非 punct，后者可能切出 20+ 段）
+                    symbols = self._reply_seg_symbols or "。！？!?~～…\n,，"
+                    segments = self._split_by_length(
+                        raw_text, self._reply_seg_min_length,
+                        self._reply_seg_max_length, symbols, self._reply_seg_words,
+                    )
             if not segments:
                 segments = self._segment_text(raw_text)
             if len(segments) <= 1:
