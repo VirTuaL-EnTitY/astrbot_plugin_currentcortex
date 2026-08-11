@@ -147,7 +147,7 @@
     "type": "string",
     "default": "",
     "_special": "select_provider",
-    "hint": "为省时省钱，建议选一个廉价快速模型（如 deepseek-v3）专用做分段，不要占用主模型。留空时自动复用当前会话模型"
+    "hint": "建议选一个非推理的快速模型（如 deepseek-chat / gpt-4o-mini）。⚠️ 切勿使用推理模型（如 deepseek-v4-flash / deepseek-reasoner / o1 等），推理模型会对分段任务「思考」10-30 秒导致必然超时降级"
   },
   "reply_seg_llm_density": {
     "description": "llm 模式专用：分段密度（每段的目标字数规模）",
