@@ -160,8 +160,8 @@
     "description": "llm 模式专用：分段数量上限（留空/0=由密度档位自动推算）",
     "type": "int",
     "default": 0,
-    "hint": "设为 0 时按上方「分段密度」自动推算：low=3、medium=5、high=8。也可手动指定硬上限（2~10），超过此数量的段落会被合并到最后一段",
-    "slider": {"min": 0, "max": 10, "step": 1}
+    "hint": "设为 0 时按上方「分段密度」自动推算：low=3、medium=5、high=8。也可手动指定硬上限（2~99），超过此数量的段落会被合并到最后一段",
+    "slider": {"min": 0, "max": 99, "step": 1}
   },
   "reply_seg_llm_min_chars": {
     "description": "llm 模式专用：原文短于此字数时不调用 LLM",
