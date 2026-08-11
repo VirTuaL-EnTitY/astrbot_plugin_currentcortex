@@ -577,8 +577,7 @@ pip install websockets>=10.0   # 仅 DG-LAB 功能需要
 | `reply_seg_llm_density` | string | `medium` | **llm 模式专用**：分段密度，即每段目标字数。`low`=每段长(~40-70字，切少)、`medium`=适中(~20-45字)、`high`=每段短(~10-25字，切细更活泼)。会自动推算段数上限并引导模型 |
 | `reply_seg_llm_max_segments` | int | `0` | **llm 模式专用**：分段数量上限。`0`=按密度档位自动推算（low=3/medium=5/high=8）；也可手动指定硬上限，超过会被合并到最后一段 |
 | `reply_seg_llm_min_chars` | int | 30 | **llm 模式专用**：原文短于此字数时不调用 LLM，直接整段发送（建议 20~50） |
-| `reply_seg_llm_timeout` | int | 15 | **llm 模式专用**：单次分段调用超时秒数，超时则降级规则分段，避免卡顿（建议 8~30） |
-| `reply_seg_llm_max_tokens` | int | 512 | **llm 模式专用**：分段输出的最大 token 数，限制输出以加速返回。分段结果是简短 JSON，512 通常足够 |
+| `reply_seg_llm_timeout` | int | 30 | **llm 模式专用**：单次分段调用超时秒数，超时则降级规则分段。默认 30 秒，涵盖大部分模型（含推理模型） |
 | `reply_seg_split_symbols` | string | `。！？!?~～…`+换行+`,，` | punct/length 模式：单字符切分符号（在这些符号处切分，符号保留在段尾）。默认含中英文逗号 |
 | `reply_seg_split_words` | string | `喵 qwq owo awa ovo` | punct/length 模式：切分词（可多字符，**空格分隔**），在词的后面切分、词保留在段尾。⚠️ 建议只放多字符词：单字符词（如 `w`）会误切英文单词，左括号 `（` 会破坏配对，均默认不带 |
 | `reply_seg_merge_threshold` | int | 4 | punct 模式：短段合并阈值。短于此长度的段会被合并到前一段，**纯标点段（如孤立的「。」）无条件合并**——消除逗号碎片与孤立标点。设为 `0` 关闭合并 |

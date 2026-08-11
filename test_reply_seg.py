@@ -185,8 +185,7 @@ def _make_plugin(**overrides):
         inst._reply_seg_llm_max_segments = Cls._REPLY_SEG_DENSITY_PROFILES[density]["max_segments"]
     inst._reply_seg_llm_provider_id = overrides.get("llm_provider_id", "")
     inst._reply_seg_llm_min_chars = overrides.get("llm_min_chars", 30)
-    inst._reply_seg_llm_timeout = overrides.get("llm_timeout", 15)
-    inst._reply_seg_llm_max_tokens = overrides.get("llm_max_tokens", 512)
+    inst._reply_seg_llm_timeout = overrides.get("llm_timeout", 30)
     # 宣传（QQ 群）相关：群号为类常量，水印概率固定 5%，无需配置
     # _segment_by_llm 需要 context.llm_generate / get_current_chat_provider_id
     inst.context = overrides.get("context", _FakeContext())
@@ -494,21 +493,20 @@ def test_segment_by_llm_timeout_returns_none():
     _check("超时降级", result, None)
 
 
-def test_segment_by_llm_passes_max_tokens_and_no_retry():
-    """调用时透传 max_tokens 限制和 request_max_retries=1。"""
+def test_segment_by_llm_clean_call():
+    """调用 llm_generate 时不传 max_tokens / request_max_retries（让 provider 用默认重试）。"""
     text = "这是一段足够长的文本用于触发 llm 分段测试，必须超过三十个字才行嗯。"
     resp = f'["{text}"]'
     inst = _make_plugin(
         llm_provider_id="p1",
-        llm_max_tokens=256,
         context=_FakeContext(llm_text=resp),
     )
     _run(inst._segment_by_llm(text, _FakeEvent()))
     calls = inst.context.llm_generate_calls
     _check_true("已调用", len(calls) == 1, f"调用次数: {len(calls)}")
     extra = calls[0].get("extra", {})
-    _check_true("透传max_tokens", extra.get("max_tokens") == 256, f"extra: {extra}")
-    _check_true("单次不重试", extra.get("request_max_retries") == 1, f"extra: {extra}")
+    _check_true("不传max_tokens", "max_tokens" not in extra, f"extra: {extra}")
+    _check_true("不传request_max_retries", "request_max_retries" not in extra, f"extra: {extra}")
 
 
 def test_segment_by_llm_success():
@@ -725,7 +723,7 @@ TESTS = [
     test_segment_by_llm_no_provider_returns_none,
     test_segment_by_llm_call_failure_returns_none,
     test_segment_by_llm_timeout_returns_none,
-    test_segment_by_llm_passes_max_tokens_and_no_retry,
+    test_segment_by_llm_clean_call,
     test_segment_by_llm_success,
     test_segment_by_llm_drift_returns_none,
     test_segment_by_llm_caps_segments,

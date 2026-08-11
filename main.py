@@ -1657,7 +1657,7 @@ class CurrentCortexPlugin(Star):
         # llm 模式：原文短于此长度时不调用 LLM，直接整段发送（省钱省时间）。
         self._reply_seg_llm_min_chars = max(0, int(config.get("reply_seg_llm_min_chars", 30)))
         # llm 模式：单次分段调用超时（秒）。超时则降级规则分段，避免回复过慢。
-        self._reply_seg_llm_timeout = max(3, int(config.get("reply_seg_llm_timeout", 15)))
+        self._reply_seg_llm_timeout = max(3, int(config.get("reply_seg_llm_timeout", 30)))
         # llm 模式：分段输出 token 上限。分段结果是 JSON 数组，输出量小，限制可加速返回。
         self._reply_seg_llm_max_tokens = max(64, int(config.get("reply_seg_llm_max_tokens", 512)))
         if self._reply_seg_enable:
@@ -2460,16 +2460,16 @@ class CurrentCortexPlugin(Star):
             target_max=tmax,
             density_guidance=profile["guidance"],
         )
-        # 性能优化：限制输出 token + 只请求一次（失败即降级）+ 超时控制。
-        # 分段结果是一个短 JSON 数组，不需要长输出，限制 max_tokens 能显著加速返回。
+        # 超时控制：让 provider 用默认重试策略（内层 5 次带退避），
+        # 仅在外层用 asyncio.wait_for 兜底超时。不传 max_tokens / request_max_retries，
+        # 因为前者被 _prepare_chat_payload 静默吞掉（无效），后者设为 1 会导致
+        # 内层不重试而外层 10 次循环接管，反而更慢且必然超时。
         try:
             resp: Optional[LLMResponse] = await asyncio.wait_for(
                 self.context.llm_generate(
                     chat_provider_id=provider_id,
                     system_prompt=system_prompt,
                     prompt=text,
-                    max_tokens=self._reply_seg_llm_max_tokens,
-                    request_max_retries=1,
                 ),
                 timeout=self._reply_seg_llm_timeout,
             )

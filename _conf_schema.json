@@ -173,16 +173,9 @@
   "reply_seg_llm_timeout": {
     "description": "llm 模式专用：分段调用超时（秒）",
     "type": "int",
-    "default": 15,
-    "hint": "单次分段 LLM 调用超过此秒数则中断并降级为规则分段，避免回复卡顿。默认 15 秒，可按网络和模型响应速度自行调整，建议 8~30",
-    "slider": {"min": 3, "max": 60, "step": 1}
-  },
-  "reply_seg_llm_max_tokens": {
-    "description": "llm 模式专用：分段输出的最大 token 数",
-    "type": "int",
-    "default": 512,
-    "hint": "限制输出长度以加速返回。分段结果是简短 JSON 数组，512 通常足够；超长回复可适当调大",
-    "slider": {"min": 64, "max": 2048, "step": 64}
+    "default": 30,
+    "hint": "单次分段 LLM 调用超过此秒数则中断并降级为规则分段。默认 30 秒，涵盖大部分模型（含推理模型）。可按模型速度自行调整",
+    "slider": {"min": 5, "max": 120, "step": 5}
   },
   "reply_seg_split_symbols": {
     "description": "分段切分符号（单字符），机器人会在这些符号处切分（符号保留在段尾）。默认包含中英文逗号，故普通文字之间也会在逗号处断开。可自行增删任意字符，如加空格、分号等",
