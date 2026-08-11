@@ -2340,17 +2340,9 @@ class CurrentCortexPlugin(Star):
                 return
 
             # llm 模式：先尝试大模型语义分段；太短、失败或只切出 1 段则降级规则分段。
-            # 降级时强制用 length 模式（有段长控制），避免 punct 把长文本切成几十段。
             segments: Optional[List[str]] = None
             if self._reply_seg_mode == "llm":
                 segments = await self._segment_by_llm(raw_text, event)
-                if not segments:
-                    # LLM 失败 → length 兜底（而非 punct，后者可能切出 20+ 段）
-                    symbols = self._reply_seg_symbols or "。！？!?~～…\n,，"
-                    segments = self._split_by_length(
-                        raw_text, self._reply_seg_min_length,
-                        self._reply_seg_max_length, symbols, self._reply_seg_words,
-                    )
             if not segments:
                 segments = self._segment_text(raw_text)
             if len(segments) <= 1:
@@ -2472,6 +2464,8 @@ class CurrentCortexPlugin(Star):
         # 仅在外层用 asyncio.wait_for 兜底超时。不传 max_tokens / request_max_retries，
         # 因为前者被 _prepare_chat_payload 静默吞掉（无效），后者设为 1 会导致
         # 内层不重试而外层 10 次循环接管，反而更慢且必然超时。
+        import time as _time
+        _t0 = _time.monotonic()
         try:
             resp: Optional[LLMResponse] = await asyncio.wait_for(
                 self.context.llm_generate(
@@ -2481,21 +2475,38 @@ class CurrentCortexPlugin(Star):
                 ),
                 timeout=self._reply_seg_llm_timeout,
             )
+            _elapsed = _time.monotonic() - _t0
+            logger.info(
+                f"[ReplySeg] llm 调用完成，耗时 {_elapsed:.1f}s "
+                f"(provider={provider_id}, text_len={len(text)})"
+            )
         except asyncio.TimeoutError:
+            _elapsed = _time.monotonic() - _t0
             logger.warning(
-                f"[ReplySeg] llm 分段超时（>{self._reply_seg_llm_timeout}s），降级规则分段"
+                f"[ReplySeg] llm 分段超时（耗时 {_elapsed:.1f}s > "
+                f"{self._reply_seg_llm_timeout}s），provider={provider_id}，"
+                f"降级规则分段"
             )
             return None
         except Exception as e:  # noqa: BLE001
-            logger.warning(f"[ReplySeg] llm 分段调用异常，降级规则分段: {e}")
+            _elapsed = _time.monotonic() - _t0
+            logger.warning(
+                f"[ReplySeg] llm 分段调用异常（耗时 {_elapsed:.1f}s），降级规则分段: {e}"
+            )
             return None
         if not resp or not resp.completion_text:
-            logger.warning("[ReplySeg] llm 分段返回空，降级规则分段")
+            logger.warning(
+                f"[ReplySeg] llm 分段返回空（resp={type(resp).__name__}, "
+                f"completion_text={'None' if not resp or not resp.completion_text else f'{len(resp.completion_text)}字'}），降级规则分段"
+            )
             return None
 
         segments = self._parse_llm_segments(resp.completion_text)
         if not segments:
-            logger.warning("[ReplySeg] llm 分段结果解析失败，降级规则分段")
+            raw_preview = resp.completion_text[:200].replace("\n", "\\n")
+            logger.warning(
+                f"[ReplySeg] llm 分段结果解析失败，原始返回: 「{raw_preview}」，降级规则分段"
+            )
             return None
 
         # 段数超限：把超出部分合并到最后一段，避免模型切成几十段。
@@ -2506,7 +2517,7 @@ class CurrentCortexPlugin(Star):
         if not self._text_close_enough(joined, text):
             logger.warning(
                 f"[ReplySeg] llm 分段合并后字数({len(joined)})与原文({len(text)})"
-                f"偏差过大，降级规则分段"
+                f"偏差过大，降级规则分段。返回 {len(segments)} 段: {segments[:3]}"
             )
             return None
         return segments
