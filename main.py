@@ -2460,34 +2460,34 @@ class CurrentCortexPlugin(Star):
             target_max=tmax,
             density_guidance=profile["guidance"],
         )
-        # 超时控制：让 provider 用默认重试策略（内层 5 次带退避），
-        # 仅在外层用 asyncio.wait_for 兜底超时。不传 max_tokens / request_max_retries，
-        # 因为前者被 _prepare_chat_payload 静默吞掉（无效），后者设为 1 会导致
-        # 内层不重试而外层 10 次循环接管，反而更慢且必然超时。
+        # 超时控制：用 asyncio.wait 而非 asyncio.wait_for。
+        # wait_for 超时后会 cancel task，httpx 连接池的 aclose 清理会阻塞事件循环
+        # （watchdog 实测阻塞 168-215 秒）。wait 超时后不 cancel，task 在后台自行结束。
         import time as _time
         _t0 = _time.monotonic()
+        _task = asyncio.ensure_future(self.context.llm_generate(
+            chat_provider_id=provider_id,
+            system_prompt=system_prompt,
+            prompt=text,
+        ))
         try:
-            resp: Optional[LLMResponse] = await asyncio.wait_for(
-                self.context.llm_generate(
-                    chat_provider_id=provider_id,
-                    system_prompt=system_prompt,
-                    prompt=text,
-                ),
-                timeout=self._reply_seg_llm_timeout,
+            _done, _pending = await asyncio.wait(
+                {_task}, timeout=self._reply_seg_llm_timeout,
             )
+            if _task not in _done:
+                _elapsed = _time.monotonic() - _t0
+                logger.warning(
+                    f"[ReplySeg] llm 分段超时（{_elapsed:.1f}s > "
+                    f"{self._reply_seg_llm_timeout}s），provider={provider_id}，"
+                    f"降级规则分段（task 留后台自行结束，不 cancel）"
+                )
+                return None
+            resp = _task.result()
             _elapsed = _time.monotonic() - _t0
             logger.info(
                 f"[ReplySeg] llm 调用完成，耗时 {_elapsed:.1f}s "
                 f"(provider={provider_id}, text_len={len(text)})"
             )
-        except asyncio.TimeoutError:
-            _elapsed = _time.monotonic() - _t0
-            logger.warning(
-                f"[ReplySeg] llm 分段超时（耗时 {_elapsed:.1f}s > "
-                f"{self._reply_seg_llm_timeout}s），provider={provider_id}，"
-                f"降级规则分段"
-            )
-            return None
         except Exception as e:  # noqa: BLE001
             _elapsed = _time.monotonic() - _t0
             logger.warning(
