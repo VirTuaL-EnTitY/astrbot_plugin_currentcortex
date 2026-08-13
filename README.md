@@ -419,7 +419,7 @@ pip install websockets>=10.0   # 仅 DG-LAB 功能需要
 
 ### 8. DG-LAB 设备管理 (`/dglab`，别名 `/电击`)
 
-通过 DG-LAB Socket V2 协议实现对郊狼脉冲主机的完整控制。**需运行 [DG-LAB Socket V2 中转服务器](https://github.com/DG-LAB-OPENSOURCE/DG-LAB-OPENSOURCE)**。
+通过 DG-LAB Socket V2 协议实现对郊狼脉冲主机的完整控制。**需运行 [DG-LAB Socket V2 中转服务器](https://github.com/dungeonlab-open/dglab-websocket-server)**。
 
 #### 基本指令
 
@@ -721,7 +721,7 @@ pip install websockets>=10.0   # 仅 DG-LAB 功能需要
 
 ### DG-LAB
 
-> ⚠️ 使用 DG-LAB 功能前，必须先部署并运行 [DG-LAB Socket V2 中转服务器](https://github.com/DG-LAB-OPENSOURCE/DG-LAB-OPENSOURCE)。
+> ⚠️ 使用 DG-LAB 功能前，必须先部署并运行 [DG-LAB Socket V2 中转服务器](https://github.com/dungeonlab-open/dglab-websocket-server)。
 
 | 配置项 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
@@ -735,7 +735,7 @@ pip install websockets>=10.0   # 仅 DG-LAB 功能需要
 <details>
 <summary><b>📦 DG-LAB 中转服务器部署</b></summary>
 
-1. 获取服务器代码：[DG-LAB-OPENSOURCE](https://github.com/DG-LAB-OPENSOURCE/DG-LAB-OPENSOURCE)
+1. 获取服务器代码：[dglab-websocket-server](https://github.com/dungeonlab-open/dglab-websocket-server)
 2. 安装依赖并启动：
    ```bash
    cd socket/v2/backend
@@ -966,7 +966,7 @@ astrbot_plugin_currentcortex/
 
 - [LeiZ API](https://api.bileizhen.top) — 提供 Pixiv / 一言 / 天气 / 男娘 / 网易云 / JMComic 等 API 服务
 - [AstrBot](https://github.com/AstrBot) — 聊天机器人框架
-- [DG-LAB-OPENSOURCE](https://github.com/DG-LAB-OPENSOURCE/DG-LAB-OPENSOURCE) — DG-LAB Socket V2 协议与中转服务器
+- [dglab-websocket-server](https://github.com/dungeonlab-open/dglab-websocket-server) — DG-LAB WebSocket 协议与中转服务器
 
 ---
 
