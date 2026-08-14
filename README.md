@@ -915,6 +915,7 @@ astrbot_plugin_currentcortex/
 ├── dglab_turnstile_store.py     # DG-LAB Turnstile 存储
 ├── dglab_chat_store.py          # DG-LAB 聊天存储
 ├── metadata.yaml                # 插件元数据
+├── CHANGELOG.md                 # 更新日志
 ├── CONTRIBUTING.md              # 贡献指南
 ├── _conf_schema.json            # 配置模式定义
 ├── requirements.txt             # Python 依赖
@@ -977,5 +978,5 @@ astrbot_plugin_currentcortex/
 
 ---
 
-**版本**：v2.0.0  
+**版本**：v2.0.0(各版本变更见 [CHANGELOG.md](CHANGELOG.md))  
 **仓库**：[GitHub](https://github.com/backrooms-yrc/astrbot_plugin_currentcortex)

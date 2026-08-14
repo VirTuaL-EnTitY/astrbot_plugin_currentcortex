@@ -73,7 +73,8 @@ chore: 版本号升至 v2.0.0
 2. 完成改动并自测（见上文「测试」一节与 PR 模板中的自测清单）
 3. 提交 PR 到 `main` 分支，按模板填写改动说明
 4. 涉及命令用法 / 配置项变更的，同步更新 `README.md` 与 `_conf_schema.json`
-5. 若修复了某个 Issue，请在 PR 描述中写 `Fixes #编号`，合并后会自动关闭对应 Issue
+5. **有用户可见变更时，在 [CHANGELOG.md](CHANGELOG.md) 的 `[Unreleased]` 小节下追加条目**（格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，按 新增/变更/修复/移除 分类）
+6. 若修复了某个 Issue，请在 PR 描述中写 `Fixes #编号`，合并后会自动关闭对应 Issue
 
 ### 代码风格约定
 
