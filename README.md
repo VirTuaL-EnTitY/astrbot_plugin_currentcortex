@@ -420,7 +420,7 @@ pip install websockets>=10.0   # 仅 DG-LAB 功能需要
 
 通过 DG-LAB Socket 协议实现对郊狼脉冲主机的完整控制。**需运行 [DG-LAB WebSocket 中转服务器](https://github.com/dungeonlab-open/dglab-websocket-server)**。
 
-> 📡 **协议版本**：官方中转仓库已删除 v2 服务端，仅保留 **v3**（`bun run v3`，默认端口 9999）与 **v4**（`bun run v4`，默认端口 9998）。自 v1.10.0 起插件**自动识别**中转服务器协议（V3 / V4，并兼容存量旧 V2 中转），无需改配置即可直接使用；亦可通过 `dglab_protocol` 配置项手动指定（`auto` / `v3` / `v4`）。
+> 📡 **协议版本**：官方中转仓库已删除 v2 服务端，仅保留 **v3**（`bun run v3`，默认端口 9999）与 **v4**（`bun run v4`，默认端口 9998）。自 v2.0.0 起插件**自动识别**中转服务器协议（V3 / V4，并兼容存量旧 V2 中转），无需改配置即可直接使用；亦可通过 `dglab_protocol` 配置项手动指定（`auto` / `v3` / `v4`）。
 >
 > - **V3**：二维码格式与旧版一致，DG-LAB APP / DG-LAB 4 APP 均可扫码；
 > - **V4**：使用新版二维码（`dungeon-lab.cn/s/?v=1&action=socket&url=...`），需 **DG-LAB 4 APP** 扫码；强度控制通过 `device.op` 任务下发（绝对强度按 APP 回传的当前值换算增量，无回传时退化为临时强度任务）。
@@ -754,7 +754,7 @@ pip install websockets>=10.0   # 仅 DG-LAB 功能需要
 <details>
 <summary><b>❓ 连接排障（对应 <a href="https://github.com/backrooms-yrc/astrbot_plugin_currentcortex/issues/3">issue #3</a>）</b></summary>
 
-- **`服务器未确认连接: 等待服务器分配 clientId 超时`**：旧版本（≤ v1.9.1）按 v2 协议在连接路径中携带自生成 clientId，被 v3 服务端误判为 APP 端而拒绝。升级到 v1.10.0+ 即可，v1.10.0 起控制端裸连根路径并使用服务端分配的 clientId。
+- **`服务器未确认连接: 等待服务器分配 clientId 超时`**：旧版本（≤ v1.9.1）按 v2 协议在连接路径中携带自生成 clientId，被 v3 服务端误判为 APP 端而拒绝。升级到 v2.0.0+ 即可，v2.0.0 起控制端裸连根路径并使用服务端分配的 clientId。
 - **`连接失败: server rejected WebSocket connection: HTTP 404`**：连接了 v4 服务端但地址带了多余路径。v4 服务端仅在根路径（或 `PREFIX` 配置的路径）接受连接，请检查 `dglab_server_url` 是否与服务端实际监听路径一致。
 - **V4 绑定后控制无效**：确认使用 **DG-LAB 4 APP** 扫码（新版二维码 `dungeon-lab.cn/s/...` 旧版 APP 无法识别）；若 APP 内有多个设备插槽，插件会自动选择第一个真实连接设备的插槽。
 
@@ -965,5 +965,5 @@ astrbot_plugin_currentcortex/
 
 ---
 
-**版本**：v1.10.0  
+**版本**：v2.0.0  
 **仓库**：[GitHub](https://github.com/backrooms-yrc/astrbot_plugin_currentcortex)
