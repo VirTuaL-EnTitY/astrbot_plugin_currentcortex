@@ -39,7 +39,6 @@ Pixiv 随机图片 · 每日一言 · 天气查询 · 男娘图片 · 网易云�
 - [🧠 跨群聊记忆](#-跨群聊记忆)
 - [⚡ 接口连通性测试](#-接口连通性测试--apitest)
 - [⚙️ 配置项](#️-配置项)
-- [🔌 Qtine 兼容包](#-qtine-兼容包)
 - [❓ 常见问题](#-常见问题)
 - [🛠️ 技术架构](#️-技术架构)
 - [📄 开源协议与致谢](#-开源协议与致谢)
@@ -57,7 +56,7 @@ Pixiv 随机图片 · 每日一言 · 天气查询 · 男娘图片 · 网易云�
 | ✨ **每日一言** | 12 种分类（动画/漫画/游戏/文学/诗词/影视…） |
 | 🌤️ **天气查询** | 实时天气 + 未来 3 天预报 |
 | 👗 **男娘图片** | 随机男娘主题图片（WebP） |
-| 🔌 **DG-LAB** | Socket V2 设备全生命周期管理、多用户/多设备隔离、CCDG WebUI 控制面板 |
+| 🔌 **DG-LAB** | Socket V3/V4（兼容旧 V2）设备全生命周期管理、协议自动识别、多用户/多设备隔离、CCDG WebUI 控制面板 |
 | 🖥️ **总 Pages** | AstrBot WebUI 集成总面板：仪表板 · 帮助中心 · 可视化设置（保存即热重载）· 郊狼控制（公网暴露开关）· 联系我们 |
 | 🧩 **按群聊开关** | 在单个群用 `/开关` 命令一键关闭/开启本插件全部命令，互不影响 |
 | 🧠 **跨群聊记忆** | 同平台所有群共享一份持久化上下文，自动注入 LLM 请求 |
@@ -419,7 +418,12 @@ pip install websockets>=10.0   # 仅 DG-LAB 功能需要
 
 ### 8. DG-LAB 设备管理 (`/dglab`，别名 `/电击`)
 
-通过 DG-LAB Socket V2 协议实现对郊狼脉冲主机的完整控制。**需运行 [DG-LAB Socket V2 中转服务器](https://github.com/dungeonlab-open/dglab-websocket-server)**。
+通过 DG-LAB Socket 协议实现对郊狼脉冲主机的完整控制。**需运行 [DG-LAB WebSocket 中转服务器](https://github.com/dungeonlab-open/dglab-websocket-server)**。
+
+> 📡 **协议版本**：官方中转仓库已删除 v2 服务端，仅保留 **v3**（`bun run v3`，默认端口 9999）与 **v4**（`bun run v4`，默认端口 9998）。自 v1.10.0 起插件**自动识别**中转服务器协议（V3 / V4，并兼容存量旧 V2 中转），无需改配置即可直接使用；亦可通过 `dglab_protocol` 配置项手动指定（`auto` / `v3` / `v4`）。
+>
+> - **V3**：二维码格式与旧版一致，DG-LAB APP / DG-LAB 4 APP 均可扫码；
+> - **V4**：使用新版二维码（`dungeon-lab.cn/s/?v=1&action=socket&url=...`），需 **DG-LAB 4 APP** 扫码；强度控制通过 `device.op` 任务下发（绝对强度按 APP 回传的当前值换算增量，无回传时退化为临时强度任务）。
 
 #### 基本指令
 
@@ -721,11 +725,12 @@ pip install websockets>=10.0   # 仅 DG-LAB 功能需要
 
 ### DG-LAB
 
-> ⚠️ 使用 DG-LAB 功能前，必须先部署并运行 [DG-LAB Socket V2 中转服务器](https://github.com/dungeonlab-open/dglab-websocket-server)。
+> ⚠️ 使用 DG-LAB 功能前，必须先部署并运行 [DG-LAB WebSocket 中转服务器](https://github.com/dungeonlab-open/dglab-websocket-server)（官方现仅提供 v3 / v4 服务端，v2 已删除）。
 
 | 配置项 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `dglab_server_url` | string | （空） | 中转服务器地址（如 `ws://192.168.1.100:9999`） |
+| `dglab_server_url` | string | （空） | 中转服务器地址（如 `ws://192.168.1.100:9999`；V4 若配置了路径前缀需一并填写，如 `wss://host:9998/v4`） |
+| `dglab_protocol` | string | auto | 中转协议版本：`auto`=自动识别（推荐）/ `v3`（默认端口 9999，兼容旧 V2 中转）/ `v4`（默认端口 9998，需 DG-LAB 4 APP 扫码） |
 | `dglab_heartbeat_interval` | int | 60 | 心跳间隔（秒），建议 30-120 |
 | `dglab_auto_connect` | bool | false | 插件启动时是否自动连接（一般设为 false） |
 | `dglab_webui_enabled` | bool | false | 是否启用 CCDG WebUI 控制面板（**默认关闭**；需了解风险后手动开启） |
@@ -733,17 +738,25 @@ pip install websockets>=10.0   # 仅 DG-LAB 功能需要
 | `dglab_webui_port` | int | 9178 | CCDG WebUI 监听端口 |
 
 <details>
-<summary><b>📦 DG-LAB 中转服务器部署</b></summary>
+<summary><b>📦 DG-LAB 中转服务器部署（Bun）</b></summary>
 
 1. 获取服务器代码：[dglab-websocket-server](https://github.com/dungeonlab-open/dglab-websocket-server)
-2. 安装依赖并启动：
+2. 安装 [Bun](https://bun.sh) 后启动对应版本服务端：
    ```bash
-   cd socket/v2/backend
-   npm install
-   npm start
+   bun run v3     # V3 服务端, 默认端口 9999 (兼容旧版 APP)
+   bun run v4     # V4 服务端, 默认端口 9998 (需 DG-LAB 4 APP)
    ```
-3. 默认端口 `9999`（可通过 `.env` 修改）
-4. 确保 AstrBot 与 DG-LAB APP 均可访问该服务器
+3. 端口等可通过 `.env` 修改（`PORT` / `PREFIX` 等，参考仓库 README）
+4. 确保 AstrBot 与 DG-LAB APP 均可访问该服务器；`/dglab bind` 时插件会自动识别协议版本并在回执中标注
+
+</details>
+
+<details>
+<summary><b>❓ 连接排障（对应 <a href="https://github.com/backrooms-yrc/astrbot_plugin_currentcortex/issues/3">issue #3</a>）</b></summary>
+
+- **`服务器未确认连接: 等待服务器分配 clientId 超时`**：旧版本（≤ v1.9.1）按 v2 协议在连接路径中携带自生成 clientId，被 v3 服务端误判为 APP 端而拒绝。升级到 v1.10.0+ 即可，v1.10.0 起控制端裸连根路径并使用服务端分配的 clientId。
+- **`连接失败: server rejected WebSocket connection: HTTP 404`**：连接了 v4 服务端但地址带了多余路径。v4 服务端仅在根路径（或 `PREFIX` 配置的路径）接受连接，请检查 `dglab_server_url` 是否与服务端实际监听路径一致。
+- **V4 绑定后控制无效**：确认使用 **DG-LAB 4 APP** 扫码（新版二维码 `dungeon-lab.cn/s/...` 旧版 APP 无法识别）；若 APP 内有多个设备插槽，插件会自动选择第一个真实连接设备的插槽。
 
 </details>
 
@@ -780,23 +793,6 @@ v1.2.0 及更早版本使用 JSON 字符串配置（已弃用）：
 - **命令帮助 / 错误提示**：`/pixiv help`、`/点歌 help` 等帮助文本和「API Key 未配置」错误提示末尾带上一行群号
 
 > ⚠️ 群号**不会**注入到机器人日常回复中，避免污染对话内容。
-
----
-
-## 🔌 Qtine 兼容包
-
-本插件同时提供 **Qtine / OneBot v11** 兼容包，沿用标准外部插件结构。
-
-将仓库中的 `qtine/` 目录复制（或软链接）到 Qtine 外部插件目录（目录名应为 `currentcortex`）：
-
-```bash
-cp -a qtine/ /path/to/Qtine/plugins/currentcortex/
-```
-
-- 目录内必须保留 `main.py`、`data.json` 与 `requirements.txt`。
-- Qtine 配置项会在面板中注册（含 `_conf_schema.json` 所有默认参数），持久化 JSON 记录和 DG-LAB 二维码保存在 `qtine/data/`。
-- 富媒体通过 **OneBot v11 CQ 码**发送（图片 `[CQ:image]`、语音 `[CQ:record]`、文件 `[CQ:file]`）。需使用支持本地 `file://` 与 CQ 码的 QQ OneBot 实现（如 NapCat）。JMComic 合并转发会降级为一条文本 + 顺序图片 CQ 码。
-- 音乐语音仍依赖系统 `ffmpeg`。若适配器不支持 record/file CQ 码，插件会保留文本链接或提示。
 
 ---
 
@@ -917,7 +913,6 @@ astrbot_plugin_currentcortex/
 ├── dglab_email_store.py         # DG-LAB 邮箱存储
 ├── dglab_turnstile_store.py     # DG-LAB Turnstile 存储
 ├── dglab_chat_store.py          # DG-LAB 聊天存储
-├── qtine/                       # Qtine / OneBot v11 兼容包
 ├── metadata.yaml                # 插件元数据
 ├── _conf_schema.json            # 配置模式定义
 ├── requirements.txt             # Python 依赖
@@ -970,5 +965,5 @@ astrbot_plugin_currentcortex/
 
 ---
 
-**版本**：v1.9.0  
+**版本**：v1.10.0  
 **仓库**：[GitHub](https://github.com/backrooms-yrc/astrbot_plugin_currentcortex)

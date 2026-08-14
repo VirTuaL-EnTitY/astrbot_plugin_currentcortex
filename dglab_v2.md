@@ -1,3 +1,7 @@
+> ⚠️ **已过时存档**：官方仓库已删除 v2 服务端（仅剩 v3/v4）。本文档仅作旧协议参考，
+> 当前实现见 `dglab_client.py`（V3/V4 自动识别，V3 兼容旧 V2 中转），
+> 新协议文档见 [dglab-websocket-server](https://github.com/dungeonlab-open/dglab-websocket-server) 与 [dglab-kit](https://github.com/dungeonlab-open/dglab-kit)。
+
 ## SOCKET 控制 - 开源控制端 (v2)
 
 ### 说明
