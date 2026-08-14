@@ -1,5 +1,16 @@
 # AstrBot CurrentCortex 综合插件
 
+> [!IMPORTANT]
+> ## 🙏 致歉信——DG-LAB 协议适配迟到的两个多月
+>
+> 各位使用 DG-LAB(郊狼)功能的用户:
+>
+> 官方开源仓库 [DG-LAB-OPENSOURCE](https://github.com/DG-LAB-OPENSOURCE/DG-LAB-OPENSOURCE) 已于 **2026年6月2日** 静默删除了 v2 中转服务端(无弃用公告、无迁移指引、旧文档链接直接失效),并于 7月3日 在新组织 [dungeonlab-open](https://github.com/dungeonlab-open) 下另起仓库,仅提供 v3 / v4 协议服务端。受此影响,旧版插件连接新服务端会报 `等待服务器分配 clientId 超时` 或 `HTTP 404`,而**我没有及时跟进,让这个问题存在了两个多月**,直到 8月13日 [#3](https://github.com/backrooms-yrc/astrbot_plugin_currentcortex/issues/3) 有用户反馈才定位到根因。对此向大家真诚致歉。
+>
+> **好消息是 [v2.0.0](https://github.com/backrooms-yrc/astrbot_plugin_currentcortex/releases/tag/v2.0.0) 已彻底修复**:协议客户端重写为 V3 / V4 自动识别(旧 v2 中转也兼容),无需改任何配置,升级即用。受影响的用户请尽快升级;v4 中转需使用 **DG-LAB 4 APP** 扫描新版二维码,详见 [DG-LAB 章节](#8-dg-lab-设备管理--dglab-别名电击)。
+>
+> —— Rcst20 · 2026年8月15日
+
 <div align="center">
 
 **一个多功能 AstrBot 插件** — 集内容获取、媒体解析、设备控制与跨群记忆于一体。
