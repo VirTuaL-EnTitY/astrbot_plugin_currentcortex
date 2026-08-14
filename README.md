@@ -5,9 +5,11 @@
 >
 > 各位使用 DG-LAB(郊狼)功能的用户:
 >
-> 官方开源仓库 [DG-LAB-OPENSOURCE](https://github.com/DG-LAB-OPENSOURCE/DG-LAB-OPENSOURCE) 已于 **2026年6月2日** 静默删除了 v2 中转服务端(无弃用公告、无迁移指引、旧文档链接直接失效),并于 7月3日 在新组织 [dungeonlab-open](https://github.com/dungeonlab-open) 下另起仓库,仅提供 v3 / v4 协议服务端。受此影响,旧版插件连接新服务端会报 `等待服务器分配 clientId 超时` 或 `HTTP 404`,而**我没有及时跟进,让这个问题存在了两个多月**,直到 8月13日 [#3](https://github.com/backrooms-yrc/astrbot_plugin_currentcortex/issues/3) 有用户反馈才定位到根因。对此向大家真诚致歉。
+> 官方中转服务端在今年 5~7 月间迁移到了 v3 / v4 协议(6月2日 旧版 v2 服务端从官方仓库移除)。这期间使用新中转的用户一直无法正常绑定设备(报 `等待服务器分配 clientId 超时` 或 `HTTP 404`),**这是我跟进上游变更不及时的失误——没有主动关注官方仓库的动向,直到 8月13日 [#3](https://github.com/backrooms-yrc/astrbot_plugin_currentcortex/issues/3) 有用户反馈才发现问题,让大家等了两个多月。对此真诚地向各位道歉。**
 >
-> **好消息是 [v2.0.0](https://github.com/backrooms-yrc/astrbot_plugin_currentcortex/releases/tag/v2.0.0) 已彻底修复**:协议客户端重写为 V3 / V4 自动识别(旧 v2 中转也兼容),无需改任何配置,升级即用。受影响的用户请尽快升级;v4 中转需使用 **DG-LAB 4 APP** 扫描新版二维码,详见 [DG-LAB 章节](#8-dg-lab-设备管理--dglab-别名电击)。
+> 问题已在 [v2.0.0](https://github.com/backrooms-yrc/astrbot_plugin_currentcortex/releases/tag/v2.0.0) 彻底修复:协议客户端重写为 V3 / V4 自动识别(旧 v2 中转同样兼容),无需改任何配置,升级即用;v4 中转需使用 **DG-LAB 4 APP** 扫描新版二维码,详见 [DG-LAB 章节](#8-dg-lab-设备管理--dglab-别名电击)。
+>
+> 为避免同类问题再次发生,我已订阅上游仓库的变更通知,并为本模块补上了 36 个协议回归测试——今后官方协议再有调整,可以第一时间跟进、不再依赖用户报障。再次感谢 issue #3 的反馈,也感谢大家的包容。
 >
 > —— Rcst20 · 2026年8月15日
 
