@@ -1,0 +1,117 @@
+name: 🐛 Bug 反馈
+description: 功能异常、报错、行为不符预期
+title: "[BUG] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈！请尽量填写完整信息，能显著加快定位速度。
+        着急使用的话也可加入 QQ 交流群 **1106353813** 直接讨论。
+
+  - type: dropdown
+    id: module
+    attributes:
+      label: 涉及功能模块
+      options:
+        - Pixiv 随机图片
+        - 一言 / 天气 / 男娘
+        - 网易云点歌
+        - JMComic 漫画
+        - 小红书 / B站 / 抖音解析
+        - DG-LAB 设备管理（/dglab）
+        - CCDG WebUI / Pages 总面板
+        - 跨群聊记忆
+        - 语义分段回复
+        - LLM 工具
+        - 按群聊开关
+        - 其他 / 不确定
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 问题描述
+      description: 发生了什么？与预期有何不同？报错请贴出完整错误信息。
+      placeholder: 一句话概括 + 详细描述
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 按步骤写清楚如何触发，例如发送了什么命令、点了什么按钮。
+      placeholder: |
+        1. 发送 '/xxxx ...'
+        2. 机器人回复 '...'
+        3. 预期应该是 '...'
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 相关日志
+      description: 请贴出 AstrBot 控制台中与问题相关的日志片段（注意隐去 API Key 等敏感信息）。DG-LAB 问题请务必附上日志。
+      render: text
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: 截图（可选）
+      description: 有截图或录屏的话更有助于定位。
+
+  - type: markdown
+    attributes:
+      value: "## 环境信息"
+
+  - type: input
+    id: plugin-version
+    attributes:
+      label: 插件版本
+      description: 见插件目录 metadata.yaml，或在 AstrBot WebUI 插件详情页查看
+      placeholder: 例如 v2.0.0
+    validations:
+      required: true
+
+  - type: input
+    id: astrbot-version
+    attributes:
+      label: AstrBot 版本
+      placeholder: 例如 v4.27.2
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: 平台适配器
+      options:
+        - aiocqhttp（NapCat / Lagrange 等）
+        - qq_official
+        - telegram
+        - discord
+        - kook
+        - slack
+        - 其他
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deploy
+    attributes:
+      label: 部署方式
+      options:
+        - UV
+        - Docker
+        - 源码 / 其他
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: 操作系统与 Python 版本
+      placeholder: 例如 Debian 12 / Python 3.11

@@ -41,6 +41,7 @@ Pixiv 随机图片 · 每日一言 · 天气查询 · 男娘图片 · 网易云�
 - [⚙️ 配置项](#️-配置项)
 - [❓ 常见问题](#-常见问题)
 - [🛠️ 技术架构](#️-技术架构)
+- [🤝 贡献指南](#-贡献指南)
 - [📄 开源协议与致谢](#-开源协议与致谢)
 
 ---
@@ -914,6 +915,7 @@ astrbot_plugin_currentcortex/
 ├── dglab_turnstile_store.py     # DG-LAB Turnstile 存储
 ├── dglab_chat_store.py          # DG-LAB 聊天存储
 ├── metadata.yaml                # 插件元数据
+├── CONTRIBUTING.md              # 贡献指南
 ├── _conf_schema.json            # 配置模式定义
 ├── requirements.txt             # Python 依赖
 └── README.md                    # 项目文档
@@ -950,6 +952,16 @@ astrbot_plugin_currentcortex/
 - **数据持久化**：DG-LAB 绑定存于 `data/dglab_bindings.json`，跨群记忆存于 `data/currentcortex_cross_group.json`（均符合 AstrBot 规范）
 - **资源管理**：连接池自动清理空闲连接，防止资源泄漏
 - **多租户隔离**：每个用户独立连接，操作互不干扰
+
+---
+
+## 🤝 贡献指南
+
+欢迎提交 Issue 与 PR！Bug 反馈 / 功能建议已配置 Issue 模板，PR 有自测清单模板。
+
+开发环境搭建、项目结构、测试运行方式、提交规范与 PR 流程见 **[CONTRIBUTING.md](CONTRIBUTING.md)**。
+
+> 💬 也可以先到 QQ 交流群 **1106353813** 讨论想法，大改动建议先对齐再动手。
 
 ---
 
