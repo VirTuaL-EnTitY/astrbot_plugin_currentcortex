@@ -262,11 +262,13 @@ class DGLabCommandHandler:
         device_store,
         default_server_url: str = "",
         data_dir: str = "data",
+        default_protocol: str = "auto",
     ):
         self._pool = connection_pool
         self._store = device_store
         self._default_server_url = default_server_url
         self._data_dir = data_dir
+        self._default_protocol = (default_protocol or "auto").lower()
 
     async def handle_command(self, event: AstrMessageEvent, message: str):
         """处理DG-LAB命令（统一入口）"""
@@ -437,6 +439,7 @@ class DGLabCommandHandler:
                 user_id=user_id,
                 device_id=device_id,
                 server_url=server_url,
+                protocol=self._default_protocol,
             )
         except DGLabCommandError:
             raise
@@ -471,11 +474,13 @@ class DGLabCommandHandler:
             bound_time=now,
             last_active=now,
             nickname=user_name,
+            protocol=self._default_protocol,
         )
         self._store.add_binding(binding)
 
         qr_img_path = self._generate_qr_image(qr_content, user_id, device_index)
 
+        protocol_label = "V4 (DG-LAB 4 APP)" if state.protocol == "v4" else "V3/V2"
         response_parts = [
             f"🔗 DG-LAB 设备绑定 #{device_index}",
             f"",
@@ -483,6 +488,7 @@ class DGLabCommandHandler:
         ]
         if user_specified_url:
             response_parts.append(f"🖥️  服务器: {server_url}")
+        response_parts.append(f"📡 协议: {protocol_label}")
         existing_count = self._store.device_count(user_id)
         if existing_count > 1:
             response_parts.append(f"📦 当前已绑定 {existing_count} 台设备")

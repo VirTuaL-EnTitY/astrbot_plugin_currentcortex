@@ -65,9 +65,15 @@
     "default": ""
   },
   "dglab_server_url": {
-    "description": "DG-LAB Socket V2 中转服务器地址（如 ws://192.168.1.100:9999 或 wss://your-domain.com:9999）。配置后 /dglab bind 命令可省略地址参数",
+    "description": "DG-LAB Socket 中转服务器地址（如 ws://192.168.1.100:9999 或 wss://your-domain.com:9999）。V3 默认端口 9999，V4 默认端口 9998（若配置了路径前缀需一并填写）。配置后 /dglab bind 命令可省略地址参数",
     "type": "string",
     "default": ""
+  },
+  "dglab_protocol": {
+    "description": "DG-LAB 中转服务器协议版本。官方 dglab-websocket-server 现仅提供 v3/v4 服务端（v2 已删除）。auto=自动识别（推荐）；v3=旧版 WebSocket 配对服务(端口 9999，兼容旧 v2 中转)；v4=DG-LAB 4 新协议(端口 9998，需 DG-LAB 4 APP 扫码)",
+    "type": "string",
+    "options": ["auto", "v3", "v4"],
+    "default": "auto"
   },
   "dglab_heartbeat_interval": {
     "description": "DG-LAB WebSocket 心跳间隔（秒），建议 30-120。用于保持设备连接活跃",

@@ -1468,6 +1468,12 @@ class CurrentCortexPlugin(Star):
         server_url = str(config.get("dglab_server_url", "")).strip()
         heartbeat_interval = float(config.get("dglab_heartbeat_interval", 60))
         auto_connect = bool(config.get("dglab_auto_connect", False))
+        dglab_protocol = str(config.get("dglab_protocol", "auto")).strip().lower() or "auto"
+        if dglab_protocol not in ("auto", "v3", "v4"):
+            logger.warning(
+                f"[DGLab] 无效的 dglab_protocol 配置值: {dglab_protocol}, 回退为 auto"
+            )
+            dglab_protocol = "auto"
 
         # 向后兼容：若新配置未填写但存在旧版 dglab 配置，则尝试解析
         if not server_url:
@@ -1511,6 +1517,7 @@ class CurrentCortexPlugin(Star):
             connection_pool=self._connection_pool,
             device_store=self._device_store,
             default_server_url=server_url,
+            default_protocol=dglab_protocol,
         )
 
         self._user_store = UserStore(data_dir="data")

@@ -32,6 +32,7 @@ class DeviceBinding:
     last_active: str = ""  # 最后活跃时间 (ISO格式)
     nickname: str = ""     # 用户昵称（可选，便于展示）
     shared: bool = False   # 是否允许他人操控（user级：控制该用户所有设备）
+    protocol: str = "auto"  # 中转服务器协议: auto(自动识别)/v3/v4
 
 
 class DeviceStore:

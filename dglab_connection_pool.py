@@ -130,8 +130,12 @@ class DeviceConnectionPool:
         server_url: str,
         client_id: Optional[str] = None,
         heartbeat_interval: float = 60.0,
+        protocol: str = "auto",
     ) -> Tuple[DGLabClient, ConnectionStatus]:
-        """获取或创建设备连接（带超时保护）"""
+        """获取或创建设备连接（带超时保护）
+
+        protocol: 中转服务器协议版本 "auto"(默认自动识别) / "v3" / "v4"
+        """
         key = self._key(user_id, device_id)
         async with self._global_lock:
             conn_info = self._connections.get(key)
@@ -174,7 +178,8 @@ class DeviceConnectionPool:
 
         try:
             state = await asyncio.wait_for(
-                client.connect(server_url, client_id), timeout=self._operation_timeout
+                client.connect(server_url, client_id, protocol=protocol),
+                timeout=self._operation_timeout,
             )
 
             conn_info.status = (
@@ -566,6 +571,7 @@ class DeviceConnectionPool:
                 device_id=device_id,
                 server_url=binding.server_url,
                 client_id=binding.client_id,
+                protocol=getattr(binding, "protocol", "") or "auto",
             )
             logger.info(
                 f"[DGLab] 设备 {user_id}:{device_id[:8]}... 重连成功 "
