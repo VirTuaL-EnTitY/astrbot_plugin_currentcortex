@@ -50,6 +50,19 @@ const coyote = ref(null);
 const saving = ref(false);
 const coyoteBusy = ref(false);
 const publicIp = ref("");
+const relay = ref(null);
+const relayBusy = ref({ v3: false, v4: false });
+const relayPublic = ref({ v3: "", v4: "" });
+const relayMeta = {
+  v3: {
+    title: "V3 中转服务器",
+    desc: "旧版配对协议（端口 9999），旧版 DG-LAB APP 与新版 APP 均可扫码，适合兼容存量设备。",
+  },
+  v4: {
+    title: "V4 中转服务器",
+    desc: "新版透传协议（端口 9998），需 DG-LAB 4 APP 扫码，官方推荐协议。",
+  },
+};
 let toastTimer = null;
 
 function parseHash() {
@@ -97,6 +110,128 @@ async function loadCoyote() {
     }
   } catch (e) {
     toast("加载郊狼状态失败: " + (e && e.message ? e.message : e));
+  }
+}
+
+async function loadRelay() {
+  try {
+    relay.value = await apiGet("cc/coyote/relay");
+    for (const v of ["v3", "v4"]) {
+      const st = relay.value && relay.value[v];
+      if (st && st.exposed && !relayPublic.value[v]) {
+        // 已暴露时补拉公网 IP 用于展示地址
+        try {
+          relayPublic.value[v] = (await apiGet("cc/coyote/public_ip")).ip || "";
+        } catch (e) { /* 保持空,由 relayUrl 回落 */ }
+      } else if (st && !st.exposed) {
+        relayPublic.value[v] = "";
+      }
+    }
+  } catch (e) {
+    toast("加载中转状态失败: " + (e && e.message ? e.message : e));
+  }
+}
+
+// ---------------------------------------------------------------- 中转服务器操作
+function relayUrl(v) {
+  const st = relay.value && relay.value[v];
+  if (!st) return "";
+  const ip = relayPublic.value[v];
+  return ip ? `ws://${ip}:${st.port}` : st.local_url || "";
+}
+
+async function relayDeploy(v) {
+  relayBusy.value[v] = true;
+  try {
+    const res = await apiPost("cc/coyote/relay/deploy", { version: v });
+    if (res.ok) {
+      toast(res.message || "部署成功");
+    } else {
+      toast("部署失败: " + (res.message || "未知错误"));
+    }
+  } catch (e) {
+    toast("部署失败: " + (e && e.message ? e.message : e));
+  } finally {
+    await loadRelay();
+    relayBusy.value[v] = false;
+  }
+}
+
+async function relayUninstall(v) {
+  const st = relay.value && relay.value[v];
+  if (!st || !st.deployed) return;
+  if (window.mdui && mdui.confirm) {
+    try {
+      await mdui.confirm({
+        headline: `确认卸载 ${v.toUpperCase()} 中转服务器？`,
+        description:
+          "将停止并删除 systemd 服务、收回防火墙放行（源码目录保留，重新部署秒级完成）。\n" +
+          "已通过该中转绑定的设备会断开连接，需要重新扫码。",
+        confirmText: "确认卸载",
+        cancelText: "取消",
+      });
+    } catch (e2) {
+      return;
+    }
+  }
+  relayBusy.value[v] = true;
+  try {
+    const res = await apiPost("cc/coyote/relay/uninstall", { version: v });
+    toast(res.ok ? res.message || "已卸载" : "卸载失败: " + (res.message || ""));
+  } catch (e) {
+    toast("卸载失败: " + (e && e.message ? e.message : e));
+  } finally {
+    await loadRelay();
+    relayBusy.value[v] = false;
+  }
+}
+
+async function relayExposeToggle(v) {
+  const st = relay.value && relay.value[v];
+  if (!st || !st.deployed) return;
+  const wantOn = !st.exposed;
+  relayBusy.value[v] = true;
+  try {
+    if (wantOn && window.mdui && mdui.confirm) {
+      // 危险操作：先弹确认框（确认 resolve，取消/ESC reject）
+      try {
+        await mdui.confirm({
+          headline: `确认放行 ${v.toUpperCase()} 中转端口？`,
+          description:
+            `将放行端口 ${st.port}/tcp：DG-LAB APP 可经公网地址接入该中转。\n` +
+            "建议仅在使用期间开启，用完关闭。",
+          confirmText: "确认放行",
+          cancelText: "取消",
+        });
+      } catch (e2) {
+        return; // 取消 → 不执行（finally 里 loadRelay 同步开关状态）
+      }
+    }
+    const res = wantOn
+      ? await apiPost("cc/coyote/relay/expose", { version: v })
+      : await apiPost("cc/coyote/relay/unexpose", { version: v });
+    if (wantOn) {
+      relayPublic.value[v] = res.ip || "";
+      toast(res.warning || `已放行端口 ${st.port}，公网地址 ${relayUrl(v)}`);
+    } else {
+      relayPublic.value[v] = "";
+      toast(res.message || "已收回公网放行");
+    }
+  } catch (e) {
+    toast("操作失败: " + (e && e.message ? e.message : e));
+  } finally {
+    await loadRelay();
+    relayBusy.value[v] = false;
+  }
+}
+
+function copyText(text, label) {
+  if (!text) return;
+  try {
+    navigator.clipboard.writeText(text);
+    toast((label || "地址") + "已复制：" + text);
+  } catch (e) {
+    toast("复制失败，请手动复制：" + text);
   }
 }
 
@@ -507,7 +642,107 @@ const TEMPLATE = /* html */ `
       <section v-if="current === 'coyote'" class="cc-section">
         <div class="cc-head">
           <h1>郊狼控制</h1>
-          <p>CCDG WebUI 总开关与公网暴露控制</p>
+          <p>中转服务器一键部署（v3/v4）· CCDG WebUI 总开关与公网暴露控制</p>
+        </div>
+
+        <!-- 中转服务器一键部署（v3/v4 各一张卡，独立部署/卸载） -->
+        <template v-if="relay">
+          <mdui-card v-for="v in ['v3', 'v4']" :key="v" class="cc-panel">
+            <h2 class="cc-panel-title">
+              <mdui-icon name="dns" class="cc-panel-icon"></mdui-icon>
+              {{ relayMeta[v].title }}
+              <span
+                class="cc-relay-badge"
+                :class="{ on: relay[v].deployed, run: relay[v].deployed && relay[v].running }"
+              >{{ relay[v].deployed ? (relay[v].running ? "运行中" : "已停止") : "未部署" }}</span>
+            </h2>
+            <div class="cc-coyote-desc">{{ relayMeta[v].desc }}</div>
+
+            <!-- 未部署：一键部署 -->
+            <template v-if="!relay[v].deployed">
+              <div class="cc-relay-actions">
+                <mdui-button
+                  variant="filled"
+                  icon="rocket_launch"
+                  :disabled="relayBusy[v] || !(relay.env && relay.env.git)"
+                  @click="relayDeploy(v)"
+                >{{ relayBusy[v] ? "部署中…" : "一键部署" }}</mdui-button>
+                <span v-if="relayBusy[v]" class="cc-coyote-busy">
+                  克隆官方仓库 / 安装依赖 / 启动服务，约需 10~60 秒，请勿关闭页面…
+                </span>
+                <span
+                  v-else-if="relay.env && !relay.env.git"
+                  class="cc-coyote-busy"
+                >系统缺少 git，请先安装 git 后再部署</span>
+              </div>
+              <mdui-linear-progress v-if="relayBusy[v]"></mdui-linear-progress>
+            </template>
+
+            <!-- 已部署：状态 + 暴露开关 + 地址 + 卸载 -->
+            <template v-else>
+              <div class="cc-relay-meta">
+                <span>端口 {{ relay[v].port }}</span>
+                <span v-if="relay[v].unit">服务 {{ relay[v].unit }}</span>
+                <span v-if="relay[v].commit">版本 {{ relay[v].commit }}</span>
+                <span v-if="!relay[v].managed" class="cc-relay-legacy">接管自手工部署</span>
+              </div>
+
+              <div class="cc-coyote-row">
+                <div class="cc-coyote-info">
+                  <div class="cc-coyote-state" :class="{ on: relay[v].exposed }">
+                    {{ relay[v].exposed ? "已暴露" : "未暴露" }}
+                  </div>
+                  <div class="cc-coyote-desc">
+                    {{ relay[v].exposed
+                      ? "端口已放行公网，DG-LAB APP 可经公网地址接入该中转。"
+                      : "仅本机（127.0.0.1）可达。开启后放行端口 " + relay[v].port + "，APP 可经公网接入。" }}
+                  </div>
+                </div>
+                <mdui-switch
+                  :checked="!!relay[v].exposed"
+                  :disabled="relayBusy[v]"
+                  @change="relayExposeToggle(v)"
+                ></mdui-switch>
+              </div>
+
+              <div v-if="relay[v].exposed" class="cc-coyote-warn">
+                <mdui-icon name="warning" class="cc-warn-icon"></mdui-icon>
+                <span>端口已放行公网！任何获得地址的 DG-LAB APP 都可接入该中转，建议仅在使用期间开启、用完关闭。</span>
+              </div>
+
+              <div v-if="relay[v].local_url" class="cc-coyote-link-row">
+                <span class="cc-coyote-link-label">本机地址</span>
+                <mdui-button
+                  variant="tonal"
+                  icon="content_copy"
+                  @click="copyText(relay[v].local_url, '本机地址 ')"
+                >{{ relay[v].local_url }}</mdui-button>
+              </div>
+
+              <div v-if="relay[v].exposed" class="cc-coyote-link-row">
+                <span class="cc-coyote-link-label">公网地址</span>
+                <mdui-button
+                  variant="filled"
+                  icon="content_copy"
+                  @click="copyText(relayUrl(v), '公网地址 ')"
+                >{{ relayUrl(v) }}</mdui-button>
+              </div>
+
+              <div class="cc-relay-actions">
+                <mdui-button
+                  class="cc-relay-uninstall"
+                  variant="outlined"
+                  icon="delete"
+                  :disabled="relayBusy[v]"
+                  @click="relayUninstall(v)"
+                >卸载</mdui-button>
+                <span v-if="relayBusy[v]" class="cc-coyote-busy">操作进行中，请稍候…</span>
+              </div>
+            </template>
+          </mdui-card>
+        </template>
+        <div v-else class="cc-loading">
+          <mdui-circular-progress></mdui-circular-progress>
         </div>
 
         <template v-if="coyote">
@@ -677,6 +912,10 @@ createApp({
       saving,
       coyoteBusy,
       publicIp,
+      relay,
+      relayBusy,
+      relayMeta,
+      relayUrl,
       fmtUptime,
       fmtDate,
       metaOf,
@@ -685,9 +924,14 @@ createApp({
       loadHelp,
       loadConfig,
       loadCoyote,
+      loadRelay,
       saveConfig,
       webuiToggle,
       exposeToggle,
+      relayDeploy,
+      relayUninstall,
+      relayExposeToggle,
+      copyText,
       copyGroupNo,
     };
   },
@@ -719,7 +963,10 @@ createApp({
       if (tab === "dashboard") this.loadStatus();
       if (tab === "help") this.loadHelp();
       if (tab === "settings") this.loadConfig();
-      if (tab === "coyote") this.loadCoyote();
+      if (tab === "coyote") {
+        this.loadCoyote();
+        this.loadRelay();
+      }
     },
   },
   created() {

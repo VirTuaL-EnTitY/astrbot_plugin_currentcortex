@@ -11,6 +11,7 @@ Page 前端（pages/cc-dashboard）通过 ``window.AstrBotPluginPage`` 调用。
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import time
@@ -545,6 +546,489 @@ async def page_coyote_unexpose(plugin):
 
 
 # ----------------------------------------------------------------------- #
+# Handler：中转服务器一键部署（v3/v4）
+# ----------------------------------------------------------------------- #
+
+# 官方服务端监听地址写死为全接口,「本机/公网」可达性完全由防火墙控制:
+# 未放行 = 仅本机(127.0.0.1)可达;ufw allow = 公网可达。
+RELAY_REPO = "https://github.com/dungeonlab-open/dglab-websocket-server"
+RELAY_BASE_DIR = "/root/dglab-relay"
+RELAY_PORTS = {"v3": 9999, "v4": 9998}
+# 检测候选 unit:一键部署用 dglab-relay-*,同时接管历史手工部署(dglab-v3/v4)
+RELAY_UNIT_CANDIDATES = {
+    "v3": ("dglab-relay-v3", "dglab-v3"),
+    "v4": ("dglab-relay-v4", "dglab-v4"),
+}
+RELAY_BUN_PATH = "/root/.bun/bin/bun"
+RELAY_UNIT_DIR = "/etc/systemd/system"
+RELAY_UFW_COMMENT = "CurrentCortex-DGLab-relay"
+
+
+def _relay_dir(version: str) -> str:
+    return os.path.join(RELAY_BASE_DIR, version)
+
+
+def _render_relay_env(version: str) -> str:
+    """渲染指定版本中转服务器的 .env 内容(纯函数,便于测试)。"""
+    lines = [
+        f"# CurrentCortex 一键部署生成 (DG-LAB {version.upper()} relay)",
+        f"PORT={RELAY_PORTS[version]}",
+        "IDLE_TIMEOUT=300000",
+        "PREFIX=/",
+        "LOG_LEVEL=info",
+        "VERBOSE=false",
+    ]
+    if version == "v3":
+        lines.insert(2, "HEARTBEAT_INTERVAL=60000")
+        lines += ["DEFAULT_PUNISHMENT_TIME=1", "DEFAULT_PUNISHMENT_DURATION=5"]
+    else:
+        lines.insert(2, "HEARTBEAT_INTERVAL=30000")
+    return "\n".join(lines) + "\n"
+
+
+def _render_relay_unit(version: str) -> str:
+    """渲染 systemd 单元内容(纯函数,便于测试)。"""
+    return (
+        "[Unit]\n"
+        f"Description=DG-LAB WebSocket {version.upper()} Relay Server (deployed by CurrentCortex)\n"
+        f"Documentation={RELAY_REPO}\n"
+        "After=network.target\n"
+        "\n"
+        "[Service]\n"
+        "Type=simple\n"
+        f"WorkingDirectory={_relay_dir(version)}\n"
+        'Environment="PATH=/root/.bun/bin:/usr/local/bin:/usr/bin:/bin"\n'
+        f"ExecStart={RELAY_BUN_PATH} run {version}-server.ts\n"
+        "Restart=on-failure\n"
+        "RestartSec=3\n"
+        "NoNewPrivileges=true\n"
+        "PrivateTmp=true\n"
+        "\n"
+        "[Install]\n"
+        "WantedBy=multi-user.target\n"
+    )
+
+
+def _parse_ufw_status(text: str, port: int) -> bool:
+    """从 `ufw status` 输出判断端口是否被放行(纯函数,便于测试)。
+
+    兼容两种格式:
+      9998/tcp                   ALLOW IN    Anywhere
+      9998/tcp (CurrentCortex)   ALLOW IN    Anywhere
+    """
+    prefix = f"{port}/"
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or ":" in stripped[:12]:  # 跳过 "Status: active" 等头行
+            continue
+        fields = stripped.split()
+        if fields and fields[0].startswith(prefix) and "ALLOW" in stripped.upper():
+            return True
+    return False
+
+
+async def _run_cmd(cmd: List[str], timeout: float = 30.0, cwd: str = None):
+    """执行外部命令,返回 (rc, stdout, stderr)。超时自动 kill。"""
+    import asyncio
+    import shutil as _shutil
+
+    if _shutil.which(cmd[0]) is None and not os.path.isabs(cmd[0]):
+        return 127, "", f"{cmd[0]}: command not found"
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            cwd=cwd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except Exception as e:
+        return 1, "", repr(e)
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        return 124, "", f"timeout after {timeout}s"
+    return (
+        proc.returncode or 0,
+        out.decode("utf-8", "replace").strip(),
+        err.decode("utf-8", "replace").strip(),
+    )
+
+
+def _relay_find_unit(version: str) -> str:
+    """返回已存在的 unit 名(不含 .service 后缀),不存在返回空串。"""
+    for name in RELAY_UNIT_CANDIDATES.get(version, ()):
+        if os.path.exists(os.path.join(RELAY_UNIT_DIR, f"{name}.service")):
+            return name
+    return ""
+
+
+def _relay_port_listening(port: int) -> bool:
+    import socket as _socket
+
+    try:
+        s = _socket.socket()
+        s.settimeout(0.5)
+        ok = s.connect_ex(("127.0.0.1", port)) == 0
+        s.close()
+        return ok
+    except Exception:
+        return False
+
+
+async def _relay_ufw_state() -> Dict[str, Any]:
+    """探测防火墙状态: {available, active}。"""
+    import shutil as _shutil
+
+    if _shutil.which("ufw") is None:
+        return {"available": False, "active": False}
+    rc, out, _ = await _run_cmd(["ufw", "status"], timeout=10)
+    active = "active" in out.splitlines()[0].lower() if out else False
+    return {"available": True, "active": bool(active and "inactive" not in out.lower())}
+
+
+async def _relay_ufw_allow(port: int, allow: bool) -> Dict[str, Any]:
+    """放行/收回端口。返回 {changed, note}。"""
+    state = await _relay_ufw_state()
+    if not state["available"]:
+        return {"changed": False, "note": "未安装 ufw,无防火墙拦截,端口本就对外可达"}
+    if not state["active"]:
+        return {"changed": False, "note": "ufw 未启用,端口本就对外可达"}
+    if allow:
+        rc, out, err = await _run_cmd(
+            ["ufw", "allow", f"{port}/tcp", "comment", RELAY_UFW_COMMENT], timeout=15
+        )
+    else:
+        rc, out, err = await _run_cmd(["ufw", "delete", "allow", f"{port}/tcp"], timeout=15)
+    if rc != 0:
+        return {"changed": False, "note": f"ufw 操作失败: {err or out}"}
+    return {"changed": True, "note": ""}
+
+
+async def _relay_ufw_allowed(port: int) -> bool:
+    state = await _relay_ufw_state()
+    if not state["available"] or not state["active"]:
+        return True  # 无防火墙 = 外部可达
+    rc, out, _ = await _run_cmd(["ufw", "status"], timeout=10)
+    return _parse_ufw_status(out, port)
+
+
+async def _relay_commit(dir_path: str) -> str:
+    if not os.path.isdir(os.path.join(dir_path, ".git")):
+        return ""
+    rc, out, _ = await _run_cmd(
+        ["git", "-C", dir_path, "rev-parse", "--short", "HEAD"], timeout=10
+    )
+    return out if rc == 0 else ""
+
+
+async def _relay_version_state(version: str) -> Dict[str, Any]:
+    """检测单个版本的部署状态(全部为事实检测,不依赖配置)。"""
+    port = RELAY_PORTS[version]
+    unit = _relay_find_unit(version)
+    running = False
+    if unit:
+        rc, _, _ = await _run_cmd(["systemctl", "is-active", unit, "--quiet"], timeout=10)
+        running = rc == 0
+    listening = _relay_port_listening(port)
+    deployed = bool(unit) or listening
+    exposed = await _relay_ufw_allowed(port) if deployed else False
+    commit = ""
+    for d in (_relay_dir(version), "/root/dglab-websocket-server"):
+        if os.path.isdir(d):
+            commit = await _relay_commit(d)
+            if commit:
+                break
+    return {
+        "deployed": deployed,
+        "running": running or listening,
+        "managed": unit.startswith("dglab-relay-"),
+        "unit": unit,
+        "port": port,
+        "exposed": exposed,
+        "commit": commit,
+        "local_url": f"ws://127.0.0.1:{port}" if deployed else "",
+    }
+
+
+async def _relay_selfcheck(version: str) -> str:
+    """部署自检:连接本机端口等待协议首帧。返回空串表示通过,否则为错误描述。"""
+    import websockets as _ws
+
+    port = RELAY_PORTS[version]
+    expect = "hello" if version == "v4" else "bind"
+    try:
+        async with _ws.connect(f"ws://127.0.0.1:{port}", open_timeout=5) as ws:
+            raw = await asyncio.wait_for(ws.recv(), timeout=5)
+            frame = json.loads(raw)
+            if isinstance(frame, dict) and frame.get("type") == expect:
+                return ""
+            return f"首帧类型异常: {frame.get('type')!r} (期望 {expect!r})"
+    except Exception as e:
+        return f"自检连接失败: {e}"
+
+
+async def _relay_deploy_version(version: str) -> Dict[str, Any]:
+    """一键部署指定版本。返回 {ok, steps: [...], message}。"""
+    import shutil as _shutil
+
+    steps: List[str] = []
+
+    def step(msg: str):
+        steps.append(msg)
+        logger.info(f"[Relay] {version} 部署: {msg}")
+
+    # 前置:已部署则拒绝
+    state = await _relay_version_state(version)
+    if state["deployed"]:
+        return {
+            "ok": False,
+            "steps": steps,
+            "message": f"{version.upper()} 中转已部署(unit={state['unit'] or '端口占用'},请先卸载再重新部署)",
+        }
+
+    # 前置:git
+    if _shutil.which("git") is None:
+        return {"ok": False, "steps": steps, "message": "系统未安装 git,无法克隆官方仓库"}
+    step("git 就绪")
+
+    # bun:缺失则自动安装
+    bun = RELAY_BUN_PATH if os.path.exists(RELAY_BUN_PATH) else _shutil.which("bun")
+    if not bun:
+        step("bun 未安装,开始自动安装(约 10~30s)")
+        rc, out, err = await _run_cmd(
+            ["bash", "-c", "curl -fsSL https://bun.sh/install | bash"], timeout=180
+        )
+        if rc != 0 or not os.path.exists(RELAY_BUN_PATH):
+            return {
+                "ok": False,
+                "steps": steps,
+                "message": f"bun 安装失败: {err[:300] or out[:300]}",
+            }
+        bun = RELAY_BUN_PATH
+        step("bun 安装完成")
+    else:
+        step(f"bun 就绪 ({bun})")
+
+    # 克隆/复用源码
+    target = _relay_dir(version)
+    if os.path.isdir(os.path.join(target, ".git")):
+        step("复用已有源码目录")
+    else:
+        if os.path.isdir(target):
+            # 目录存在但不是仓库(残留),清掉重来
+            import shutil as _rm
+
+            _rm.rmtree(target, ignore_errors=True)
+        step("克隆官方仓库(约 5~20s)")
+        rc, out, err = await _run_cmd(
+            ["git", "clone", "--depth", "1", RELAY_REPO, target], timeout=120
+        )
+        if rc != 0:
+            return {"ok": False, "steps": steps, "message": f"克隆失败: {err[:300]}"}
+        step("克隆完成")
+
+    # .env
+    env_path = os.path.join(target, ".env")
+    with open(env_path, "w", encoding="utf-8") as f:
+        f.write(_render_relay_env(version))
+    step(f"写入 .env (PORT={RELAY_PORTS[version]})")
+
+    # 依赖
+    step("安装依赖 (bun install)")
+    rc, out, err = await _run_cmd(["bun", "install"], cwd=target, timeout=120)
+    if rc != 0:
+        return {"ok": False, "steps": steps, "message": f"bun install 失败: {err[:300]}"}
+
+    # systemd 单元
+    unit_name = f"dglab-relay-{version}"
+    unit_path = os.path.join(RELAY_UNIT_DIR, f"{unit_name}.service")
+    with open(unit_path, "w", encoding="utf-8") as f:
+        f.write(_render_relay_unit(version))
+    step(f"写入 systemd 单元 {unit_name}.service")
+
+    rc, out, err = await _run_cmd(["systemctl", "daemon-reload"], timeout=30)
+    if rc != 0:
+        return {"ok": False, "steps": steps, "message": f"daemon-reload 失败: {err[:200]}"}
+    rc, out, err = await _run_cmd(
+        ["systemctl", "enable", "--now", unit_name], timeout=30
+    )
+    if rc != 0:
+        return {"ok": False, "steps": steps, "message": f"服务启动失败: {err[:300]}"}
+    step("服务已启动 (enable --now)")
+
+    # 自检
+    await asyncio.sleep(1)
+    err_msg = await _relay_selfcheck(version)
+    if err_msg:
+        return {
+            "ok": False,
+            "steps": steps,
+            "message": f"服务已启动但自检未通过: {err_msg}(可查看 journalctl -u {unit_name})",
+        }
+    step("自检通过(协议首帧正常)")
+
+    # 不放行防火墙:暴露由开关控制(默认关闭 = 仅本机可达)
+    step("完成(未放行防火墙,如需公网访问请打开「暴露公网」开关)")
+    return {"ok": True, "steps": steps, "message": f"{version.upper()} 中转部署成功"}
+
+
+async def _relay_uninstall_version(version: str) -> Dict[str, Any]:
+    """卸载:停服务 + 删单元 + 收回防火墙放行。保留源码目录便于重装。"""
+    steps: List[str] = []
+    unit = _relay_find_unit(version)
+    port = RELAY_PORTS[version]
+    if not unit and not _relay_port_listening(port):
+        return {"ok": False, "steps": steps, "message": f"{version.upper()} 未部署"}
+
+    if unit:
+        await _run_cmd(["systemctl", "disable", "--now", unit], timeout=30)
+        steps.append(f"停止服务 {unit}")
+        try:
+            os.remove(os.path.join(RELAY_UNIT_DIR, f"{unit}.service"))
+        except OSError:
+            pass
+        await _run_cmd(["systemctl", "daemon-reload"], timeout=30)
+        await _run_cmd(["systemctl", "reset-failed", unit], timeout=10)
+        steps.append("删除 systemd 单元")
+    else:
+        steps.append(f"端口 {port} 被无 systemd 服务的进程占用,请手动处理")
+
+    fw = await _relay_ufw_allow(port, allow=False)
+    if fw["changed"]:
+        steps.append(f"收回防火墙 {port}/tcp 放行")
+    return {
+        "ok": True,
+        "steps": steps,
+        "message": f"{version.upper()} 已卸载(源码目录 {_relay_dir(version)} 保留,重装秒级)",
+    }
+
+
+async def page_relay_status(plugin):
+    """GET /cc/coyote/relay — 中转服务器部署状态(v3/v4 独立检测)。"""
+    try:
+        import shutil as _shutil
+
+        ufw = await _relay_ufw_state()
+        env = {
+            "bun": os.path.exists(RELAY_BUN_PATH) or bool(_shutil.which("bun")),
+            "git": bool(_shutil.which("git")),
+            "ufw": ufw,
+        }
+        return json_response(
+            {
+                "env": env,
+                "v3": await _relay_version_state("v3"),
+                "v4": await _relay_version_state("v4"),
+            }
+        )
+    except Exception as e:
+        logger.error(f"[Pages] /cc/coyote/relay 失败: {e}", exc_info=True)
+        return error_response(f"获取中转状态失败: {e}", status_code=500)
+
+
+async def page_relay_deploy(plugin):
+    """POST /cc/coyote/relay/deploy {version} — 一键部署 v3/v4 中转。"""
+    try:
+        payload = await request.json(default={}) or {}
+        version = str(payload.get("version", "")).lower()
+        if version not in RELAY_PORTS:
+            return error_response("version 必须是 v3 或 v4", status_code=400)
+        result = await asyncio.wait_for(
+            _relay_deploy_version(version), timeout=300
+        )
+        state = await _relay_version_state(version)
+        return json_response({**result, "state": state})
+    except asyncio.TimeoutError:
+        return error_response("部署超时(>300s),请查看插件日志排查", status_code=500)
+    except Exception as e:
+        logger.error(f"[Pages] relay/deploy 失败: {e}", exc_info=True)
+        return error_response(f"部署失败: {e}", status_code=500)
+
+
+async def page_relay_uninstall(plugin):
+    """POST /cc/coyote/relay/uninstall {version} — 卸载中转。"""
+    try:
+        payload = await request.json(default={}) or {}
+        version = str(payload.get("version", "")).lower()
+        if version not in RELAY_PORTS:
+            return error_response("version 必须是 v3 或 v4", status_code=400)
+        result = await _relay_uninstall_version(version)
+        state = await _relay_version_state(version)
+        return json_response({**result, "state": state})
+    except Exception as e:
+        logger.error(f"[Pages] relay/uninstall 失败: {e}", exc_info=True)
+        return error_response(f"卸载失败: {e}", status_code=500)
+
+
+async def page_relay_expose(plugin):
+    """POST /cc/coyote/relay/expose {version} — 放行端口 + 探测公网地址。"""
+    try:
+        payload = await request.json(default={}) or {}
+        version = str(payload.get("version", "")).lower()
+        if version not in RELAY_PORTS:
+            return error_response("version 必须是 v3 或 v4", status_code=400)
+        port = RELAY_PORTS[version]
+        state = await _relay_version_state(version)
+        if not state["deployed"]:
+            return error_response(f"{version.upper()} 未部署,请先部署", status_code=400)
+
+        fw = await _relay_ufw_allow(port, allow=True)
+        ip = await plugin.get_public_ip()
+        public_url = f"ws://{ip}:{port}"
+        logger.warning(
+            "[Relay] ⚠️ %s 中转端口 %s 已放行公网(%s)!DG-LAB APP 可直连,请知悉风险。",
+            version.upper(),
+            port,
+            public_url,
+        )
+        return json_response(
+            {
+                "ok": True,
+                "version": version,
+                "port": port,
+                "fw": fw,
+                "ip": ip,
+                "local_url": f"ws://127.0.0.1:{port}",
+                "public_url": public_url,
+                "warning": "已放行公网,任何知道地址的 DG-LAB APP 都可尝试接入该中转!",
+            }
+        )
+    except Exception as e:
+        logger.error(f"[Pages] relay/expose 失败: {e}", exc_info=True)
+        return error_response(f"暴露公网失败: {e}", status_code=500)
+
+
+async def page_relay_unexpose(plugin):
+    """POST /cc/coyote/relay/unexpose {version} — 收回端口放行,回到仅本机可达。"""
+    try:
+        payload = await request.json(default={}) or {}
+        version = str(payload.get("version", "")).lower()
+        if version not in RELAY_PORTS:
+            return error_response("version 必须是 v3 或 v4", status_code=400)
+        port = RELAY_PORTS[version]
+        fw = await _relay_ufw_allow(port, allow=False)
+        return json_response(
+            {
+                "ok": True,
+                "version": version,
+                "port": port,
+                "fw": fw,
+                "local_url": f"ws://127.0.0.1:{port}",
+                "message": "已收回公网放行,恢复仅本机可达"
+                if fw["changed"]
+                else (fw["note"] or "未检测到放行规则"),
+            }
+        )
+    except Exception as e:
+        logger.error(f"[Pages] relay/unexpose 失败: {e}", exc_info=True)
+        return error_response(f"取消暴露失败: {e}", status_code=500)
+
+
+# ----------------------------------------------------------------------- #
 # Handler：帮助中心
 # ----------------------------------------------------------------------- #
 
@@ -695,6 +1179,11 @@ def register_routes(plugin) -> None:
         (f"/{prefix}/cc/coyote/disable", page_coyote_disable, ["POST"], "关闭郊狼 WebUI"),
         (f"/{prefix}/cc/coyote/expose", page_coyote_expose, ["POST"], "暴露郊狼 WebUI 公网"),
         (f"/{prefix}/cc/coyote/unexpose", page_coyote_unexpose, ["POST"], "取消郊狼 WebUI 公网暴露"),
+        (f"/{prefix}/cc/coyote/relay", page_relay_status, ["GET"], "中转服务器部署状态(v3/v4)"),
+        (f"/{prefix}/cc/coyote/relay/deploy", page_relay_deploy, ["POST"], "一键部署中转服务器(v3/v4)"),
+        (f"/{prefix}/cc/coyote/relay/uninstall", page_relay_uninstall, ["POST"], "卸载中转服务器"),
+        (f"/{prefix}/cc/coyote/relay/expose", page_relay_expose, ["POST"], "中转服务器暴露公网(放行端口)"),
+        (f"/{prefix}/cc/coyote/relay/unexpose", page_relay_unexpose, ["POST"], "中转服务器取消公网暴露"),
         (f"/{prefix}/cc/help", page_help, ["GET"], "帮助中心文档"),
     ]
     for route, handler, methods, desc in routes:

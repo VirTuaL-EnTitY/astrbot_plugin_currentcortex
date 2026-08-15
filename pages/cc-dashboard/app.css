@@ -464,6 +464,55 @@ body {
   50% { opacity: 0.4; }
 }
 
+/* ---------------- 中转服务器一键部署 ---------------- */
+.cc-relay-badge {
+  margin-left: 8px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  vertical-align: middle;
+  background: rgb(var(--mdui-color-surface-variant));
+  color: rgb(var(--mdui-color-on-surface-variant));
+}
+
+.cc-relay-badge.on {
+  background: rgb(var(--mdui-color-error-container));
+  color: rgb(var(--mdui-color-on-error-container));
+}
+
+.cc-relay-badge.on.run {
+  background: rgb(var(--mdui-color-primary-container));
+  color: rgb(var(--mdui-color-on-primary-container));
+}
+
+.cc-relay-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 10px 0 4px;
+  font-size: 13px;
+  color: rgb(var(--mdui-color-on-surface-variant));
+}
+
+.cc-relay-legacy {
+  color: rgb(var(--mdui-color-tertiary));
+  font-style: italic;
+}
+
+.cc-relay-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.cc-relay-uninstall {
+  --mdui-color-primary: var(--mdui-color-error);
+  --mdui-color-on-primary: var(--mdui-color-on-error);
+}
+
 /* ---------------- 联系我们 ---------------- */
 .cc-contact-group {
   display: flex;
