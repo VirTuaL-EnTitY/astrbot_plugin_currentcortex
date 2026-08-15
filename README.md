@@ -1,5 +1,16 @@
 # AstrBot CurrentCortex 综合插件
 
+> [!NOTE]
+> ## 📢 紧急招募：DG-LAB 远控功能急缺真机测试志愿者
+>
+> DG-LAB（郊狼）**远控功能目前缺少真机测试，急需志愿者参与实测**——没有真实设备反馈，bug 只能盲修、迭代只能停滞。如果你手头有 **郊狼脉冲主机 3.0**，请务必加入官方群参与测试：
+>
+> - **测试内容**：设备绑定 · 远程控制指令 · CCDG WebUI 控制面板 · 中转服务器部署（V3 / V4 协议）
+> - **参与方式**：加入官方 QQ 群 **1106353813**（[点击加入](https://qun.qq.com/universal-share/share?ac=1&authKey=OmLNlwPdKBlOMNNic9zCRIlfAVn%2BqsvY0rZDEpEYLNsZ6D5UvREADl%2FeNd2nGAUH&busi_data=eyJncm91cENvZGUiOiIxMTA2MzUzODEzIiwidG9rZW4iOiJERWFBR1hSV1djMSswSHI4MEpmQzhmTFlzZTN0Q2VvbFEvZXpQbWZIaHNNSW5Dd2dHcFVKVVJmTTdzWG1OWXBVIiwidWluIjoiMTk0NTgyNjM0NiJ9&data=AFoZ21e7OHbTEKvm7w_zeEuScAfmBnqoa2V6OZFXfaajJ7cTjHQNk3JxtyRUTFE69pnNSWekOVIAA54qMXW97Q&svctype=4&tempid=h5_group_info)），入群说明来意或直接 @维护者
+> - **测试反馈**：问题第一时间跟进修复，贡献者记入更新日志致谢
+>
+> 没有设备的朋友也欢迎进群围观，或帮忙转发扩散 🙏
+
 > [!IMPORTANT]
 > ## 🙏 致歉信——DG-LAB 协议适配迟到的两个多月
 >
