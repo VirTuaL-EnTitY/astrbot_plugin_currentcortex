@@ -854,8 +854,18 @@ async def _relay_deploy_version(version: str) -> Dict[str, Any]:
     # systemd 单元
     unit_name = f"dglab-relay-{version}"
     unit_path = os.path.join(RELAY_UNIT_DIR, f"{unit_name}.service")
-    with open(unit_path, "w", encoding="utf-8") as f:
-        f.write(_render_relay_unit(version))
+    try:
+        with open(unit_path, "w", encoding="utf-8") as f:
+            f.write(_render_relay_unit(version))
+    except PermissionError:
+        return {
+            "ok": False,
+            "steps": steps,
+            "message": (
+                f"无权限写入 {unit_path}。AstrBot 服务若启用了 ProtectSystem 只读保护,"
+                "需添加 systemd 覆盖(ReadWritePaths=/etc/ufw /etc/systemd/system)后重启 AstrBot"
+            ),
+        }
     step(f"写入 systemd 单元 {unit_name}.service")
 
     rc, out, err = await _run_cmd(["systemctl", "daemon-reload"], timeout=30)
