@@ -186,9 +186,10 @@ async function relayUninstall(v) {
   }
 }
 
-async function relayExposeToggle(v) {
+async function relayExposeToggle(v, ev) {
   const st = relay.value && relay.value[v];
   if (!st || !st.deployed) return;
+  syncSwitch(ev, !!st.exposed);
   const wantOn = !st.exposed;
   relayBusy.value[v] = true;
   try {
@@ -236,6 +237,15 @@ function copyText(text, label) {
 }
 
 // ---------------------------------------------------------------- 操作
+function syncSwitch(ev, checked) {
+  // mdui-switch 受控组件陷阱:用户点击后 DOM checked 先行翻转,若异步操作后
+  // 数据值与之前相同(失败/取消),Vue 因新旧 vnode 值一致会跳过 patch,
+  // 开关视觉卡在"已点击"状态。因此处理起点先把 DOM 回同步到数据值,
+  // 此后视觉变化只由数据驱动。
+  const el = ev && ev.target;
+  if (el) el.checked = !!checked;
+}
+
 async function saveConfig() {
   const payload = {};
   for (const g of configGroups.value) {
@@ -266,8 +276,9 @@ async function saveConfig() {
   }
 }
 
-async function webuiToggle() {
+async function webuiToggle(ev) {
   // 总开关：仅启用/关闭 WebUI，监听保持 127.0.0.1（本机），不涉及公网暴露
+  syncSwitch(ev, !!(coyote.value && coyote.value.enabled));
   coyoteBusy.value = true;
   try {
     const wantOn = !(coyote.value && coyote.value.enabled);
@@ -303,10 +314,11 @@ async function webuiToggle() {
   }
 }
 
-async function exposeToggle() {
+async function exposeToggle(ev) {
   // 暴露公网开关：仅当 WebUI 已启用时可见。
   // 打开 -> 监听改为 0.0.0.0（公网可访问）并探测公网 IP；
   // 关闭 -> 恢复 127.0.0.1，WebUI 总开关状态保留。
+  syncSwitch(ev, !!(coyote.value && coyote.value.is_public));
   coyoteBusy.value = true;
   try {
     const wantOn = !(coyote.value && coyote.value.is_public);
@@ -698,11 +710,11 @@ const TEMPLATE = /* html */ `
                       : "仅本机（127.0.0.1）可达。开启后放行端口 " + relay[v].port + "，APP 可经公网接入。" }}
                   </div>
                 </div>
-                <mdui-switch
-                  :checked="!!relay[v].exposed"
-                  :disabled="relayBusy[v]"
-                  @change="relayExposeToggle(v)"
-                ></mdui-switch>
+              <mdui-switch
+                :checked="!!relay[v].exposed"
+                :disabled="relayBusy[v]"
+                @change="relayExposeToggle(v, $event)"
+              ></mdui-switch>
               </div>
 
               <div v-if="relay[v].exposed" class="cc-coyote-warn">
@@ -766,7 +778,7 @@ const TEMPLATE = /* html */ `
               <mdui-switch
                 :checked="!!coyote.enabled"
                 :disabled="coyoteBusy"
-                @change="webuiToggle"
+                @change="webuiToggle($event)"
               ></mdui-switch>
             </div>
 
@@ -800,7 +812,7 @@ const TEMPLATE = /* html */ `
               <mdui-switch
                 :checked="!!coyote.is_public"
                 :disabled="coyoteBusy"
-                @change="exposeToggle"
+                @change="exposeToggle($event)"
               ></mdui-switch>
             </div>
 

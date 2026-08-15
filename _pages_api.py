@@ -691,7 +691,7 @@ async def _relay_ufw_state() -> Dict[str, Any]:
 
 
 async def _relay_ufw_allow(port: int, allow: bool) -> Dict[str, Any]:
-    """放行/收回端口。返回 {changed, note}。"""
+    """放行/收回端口。返回 {changed, note};changed=True 仅代表规则已实际生效。"""
     state = await _relay_ufw_state()
     if not state["available"]:
         return {"changed": False, "note": "未安装 ufw,无防火墙拦截,端口本就对外可达"}
@@ -704,7 +704,15 @@ async def _relay_ufw_allow(port: int, allow: bool) -> Dict[str, Any]:
     else:
         rc, out, err = await _run_cmd(["ufw", "delete", "allow", f"{port}/tcp"], timeout=15)
     if rc != 0:
-        return {"changed": False, "note": f"ufw 操作失败: {err or out}"}
+        logger.warning("[Relay] ufw %s %s/tcp 失败 rc=%s: %s", "allow" if allow else "delete", port, rc, (err or out)[:200])
+        return {"changed": False, "note": f"ufw 操作失败(rc={rc}): {(err or out)[:200]}"}
+    # 关键:命令成功 ≠ 规则生效,以 ufw status 实际查询结果为准
+    allowed_now = await _relay_ufw_allowed(port)
+    if allow and not allowed_now:
+        logger.warning("[Relay] ufw allow 返回成功但规则未出现(端口 %s)", port)
+        return {"changed": False, "note": "ufw allow 已执行但规则未生效,请手动检查 `ufw status`"}
+    if (not allow) and allowed_now and state["active"]:
+        return {"changed": False, "note": "ufw delete 已执行但规则仍存在,请手动检查 `ufw status`"}
     return {"changed": True, "note": ""}
 
 
@@ -977,6 +985,16 @@ async def page_relay_expose(plugin):
             return error_response(f"{version.upper()} 未部署,请先部署", status_code=400)
 
         fw = await _relay_ufw_allow(port, allow=True)
+        if not fw["changed"]:
+            # ufw 未实际生效时必须显式报错,否则前端会误认为已放行
+            # (changed=False 可能是"无防火墙本就可达",也可能是执行失败,以 note 区分)
+            if "可达" in fw["note"]:
+                pass  # 无防火墙场景:端口本就对外可达,视为已暴露
+            else:
+                logger.error("[Relay] %s 端口 %s 放行失败: %s", version.upper(), port, fw["note"])
+                return error_response(
+                    f"放行端口 {port} 失败: {fw['note']}", status_code=500
+                )
         ip = await plugin.get_public_ip()
         public_url = f"ws://{ip}:{port}"
         logger.warning(
@@ -1011,6 +1029,11 @@ async def page_relay_unexpose(plugin):
             return error_response("version 必须是 v3 或 v4", status_code=400)
         port = RELAY_PORTS[version]
         fw = await _relay_ufw_allow(port, allow=False)
+        if not fw["changed"] and "可达" not in fw["note"]:
+            logger.error("[Relay] %s 端口 %s 收回失败: %s", version.upper(), port, fw["note"])
+            return error_response(
+                f"收回端口 {port} 失败: {fw['note']}", status_code=500
+            )
         return json_response(
             {
                 "ok": True,
