@@ -992,7 +992,7 @@ astrbot_plugin_currentcortex/
 
 ## 📄 开源协议与致谢
 
-**MIT License**
+本项目采用 [MIT License](LICENSE) 开源。
 
 致谢：
 
