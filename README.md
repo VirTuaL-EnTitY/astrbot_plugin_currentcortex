@@ -1,5 +1,16 @@
 # AstrBot CurrentCortex 综合插件
 
+> [!IMPORTANT]
+> ## 🔒 使用本插件前，请务必加入官方 QQ 群
+>
+> **所有用户请务必加入官方 QQ 群 1106353813**（[点击加入](https://qun.qq.com/universal-share/share?ac=1&authKey=OmLNlwPdKBlOMNNic9zCRIlfAVn%2BqsvY0rZDEpEYLNsZ6D5UvREADl%2FeNd2nGAUH&busi_data=eyJncm91cENvZGUiOiIxMTA2MzUzODEzIiwidG9rZW4iOiJERWFBR1hSV1djMSswSHI4MEpmQzhmTFlzZTN0Q2VvbFEvZXpQbWZIaHNNSW5Dd2dHcFVKVVJmTTdzWG1OWXBVIiwidWluIjoiMTk0NTgyNjM0NiJ9&data=AFoZ21e7OHbTEKvm7w_zeEuScAfmBnqoa2V6OZFXfaajJ7cTjHQNk3JxtyRUTFE69pnNSWekOVIAA54qMXW97Q&svctype=4&tempid=h5_group_info)）。
+>
+> - **更新与紧急公告**：版本更新、上游接口/协议变动、故障通知均在群内第一时间发布
+> - **问题反馈**：遇到 bug 直接在群里 @维护者，跟进速度远快于 GitHub Issues
+> - **使用答疑**：开发者与热心群友常驻答疑，欢迎交流使用心得
+>
+> 入群后请先阅读群公告。未加群的用户遇到问题时可能无法获得及时支持。
+
 > [!NOTE]
 > ## 📢 紧急招募：DG-LAB 远控功能急缺真机测试志愿者
 >
@@ -34,11 +45,6 @@ Pixiv 随机图片 · 每日一言 · 天气查询 · 男娘图片 · 网易云�
 
 ---
 
-> 💬 **插件官方QQ交流群**：**1106353813**，[点击跳转](https://qun.qq.com/universal-share/share?ac=1&authKey=OmLNlwPdKBlOMNNic9zCRIlfAVn%2BqsvY0rZDEpEYLNsZ6D5UvREADl%2FeNd2nGAUH&busi_data=eyJncm91cENvZGUiOiIxMTA2MzUzODEzIiwidG9rZW4iOiJERWFBR1hSV1djMSswSHI4MEpmQzhmTFlzZTN0Q2VvbFEvZXpQbWZIaHNNSW5Dd2dHcFVKVVJmTTdzWG1OWXBVIiwidWluIjoiMTk0NTgyNjM0NiJ9&data=AFoZ21e7OHbTEKvm7w_zeEuScAfmBnqoa2V6OZFXfaajJ7cTjHQNk3JxtyRUTFE69pnNSWekOVIAA54qMXW97Q&svctype=4&tempid=h5_group_info)
->
-> 欢迎加入！在这里可以获取更新通知、反馈问题与建议、交流使用心得，开发者也会在群内答疑。
-> 遇到 bug 或有新功能想法，也可以直接在群里 @ 维护者，或到 [Issues](https://github.com/backrooms-yrc/astrbot_plugin_currentcortex/issues) 提交。
->
 > ⚠️ **本群是 CurrentCortex 插件的社区交流群，与 [LeiZ API](https://api.bileizhen.top) 官方无关**。本插件是基于 LeiZ API 开发的**社区（第三方）插件**，LeiZ API 的注册、Key 获取、接口计费、故障等问题请到 LeiZ API 官网及其官方渠道咨询，勿在本群反馈。
 
 ---
