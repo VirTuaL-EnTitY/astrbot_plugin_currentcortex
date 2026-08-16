@@ -1,13 +1,16 @@
 """Pages 中转服务器(一键部署)纯函数单元测试。
 
-覆盖: .env 渲染、systemd 单元渲染、ufw status 解析、unit 检测。
+覆盖: .env 渲染、systemd 单元渲染、ufw status 解析、unit 检测、
+CCDG WebUI 暴露公网开关的 ufw 放行/收回行为。
 
 运行方式: python3 test_relay_pages.py
 """
 
+import asyncio
 import os
 import sys
 import tempfile
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -121,6 +124,117 @@ def test_find_unit():
             P.RELAY_UNIT_DIR = old
 
 
+class FakePlugin:
+    def __init__(self):
+        self.config = {
+            "dglab_webui_enabled": False,
+            "dglab_webui_host": "127.0.0.1",
+            "dglab_webui_port": 9178,
+        }
+
+    async def get_public_ip(self):
+        return "1.2.3.4"
+
+
+def _make_ufw(result):
+    """构造可记录调用的 _relay_ufw_allow 替身。"""
+
+    async def fake(port, allow, comment=P.RELAY_UFW_COMMENT):
+        fake.calls.append((port, allow, comment))
+        return result
+
+    fake.calls = []
+    return fake
+
+
+def test_webui_expose_ufw():
+    print("\n🌐 WebUI 暴露公网 ufw 集成")
+
+    async def run():
+        plugin = FakePlugin()
+        saved = []
+        json_calls = []
+
+        async def fake_save(p, payload):
+            saved.append(dict(payload))
+            return {"changed": list(payload.keys()), "reloaded": True}
+
+        def _json(payload, *a, **k):
+            json_calls.append(payload)
+            return payload
+
+        def _error(message, *a, **k):
+            return {"error": message}
+
+        with patch.object(P, "json_response", _json), patch.object(
+            P, "error_response", _error
+        ), patch.object(P, "_save_and_reload", fake_save):
+            # 1) 放行成功 → 落配置 + 返回公网地址
+            fake_ok = _make_ufw({"changed": True, "note": ""})
+
+            async def _json_payload(default=None):
+                return {}
+
+            with patch.object(P, "_relay_ufw_allow", fake_ok):
+                P.request.json = _json_payload
+                res = await P.page_coyote_expose(plugin)
+            check("放行成功返回 ok", res.get("ok") is True, res)
+            check(
+                "已保存 0.0.0.0 监听",
+                bool(saved) and saved[-1]["dglab_webui_host"] == "0.0.0.0",
+                saved,
+            )
+            check(
+                "放行带 WebUI 注释",
+                bool(fake_ok.calls) and fake_ok.calls[-1][2] == P.WEBUI_UFW_COMMENT,
+                fake_ok.calls,
+            )
+            check("返回公网链接", res.get("url") == "http://1.2.3.4:9178", res)
+
+            # 2) 放行失败(非可达) → 显式报错且不落配置
+            saved.clear()
+            fake_fail = _make_ufw({"changed": False, "note": "ufw 操作失败(rc=1): boom"})
+            with patch.object(P, "_relay_ufw_allow", fake_fail):
+                res = await P.page_coyote_expose(plugin)
+            check("放行失败返回错误", isinstance(res, dict) and "boom" in res.get("error", ""), res)
+            check("失败不落配置", not saved, saved)
+
+            # 3) 无防火墙(可达) → 照常暴露并提示
+            saved.clear()
+            fake_nofw = _make_ufw(
+                {"changed": False, "note": "未安装 ufw,无防火墙拦截,端口本就对外可达"}
+            )
+            with patch.object(P, "_relay_ufw_allow", fake_nofw):
+                res = await P.page_coyote_expose(plugin)
+            check("无防火墙仍可暴露", res.get("ok") is True and bool(saved), res)
+            check("warning 带无防火墙提示", "无防火墙拦截" in res.get("warning", ""), res)
+
+            # 4) unexpose: 恢复本机监听;删除失败时消息带提示
+            saved.clear()
+            fake_del_fail = _make_ufw({"changed": False, "note": "ufw 操作失败(rc=1): boom"})
+            with patch.object(P, "_relay_ufw_allow", fake_del_fail):
+                res = await P.page_coyote_unexpose(plugin)
+            check(
+                "unexpose 恢复本机监听",
+                bool(saved) and saved[-1]["dglab_webui_host"] == "127.0.0.1",
+                saved,
+            )
+            check("删除失败消息带提示", "收回失败" in res.get("message", ""), res)
+
+            # 5) disable 也会收回防火墙放行
+            fake_del = _make_ufw({"changed": True, "note": ""})
+            with patch.object(P, "_relay_ufw_allow", fake_del):
+                res = await P.page_coyote_disable(plugin)
+            check(
+                "disable 关闭并收回放行",
+                bool(fake_del.calls) and fake_del.calls[-1][1] is False,
+                fake_del.calls,
+            )
+            check("disable 返回 ok", res.get("ok") is True, res)
+
+    asyncio.run(run())
+
+
 def main():
     print("=" * 60)
     print("🧪 Pages 中转服务器一键部署 · 纯函数测试")
@@ -129,6 +243,7 @@ def main():
     test_unit_render()
     test_ufw_parse()
     test_find_unit()
+    test_webui_expose_ufw()
     print("\n" + "=" * 60)
     print(f"📊 总计: {PASS}/{PASS + FAIL} 通过")
     return FAIL == 0

@@ -331,8 +331,8 @@ async function exposeToggle(ev) {
           await mdui.confirm({
             headline: "确认暴露公网？",
             description:
-              "开启后 WebUI 将监听 0.0.0.0:9178，公网任意地址都能访问注册、登录、设备控制等接口。\n" +
-              "强烈建议先配置反向代理 + 鉴权（如 Caddy + BasicAuth、Nginx + IP 白名单）。",
+              "开启后 WebUI 将监听 0.0.0.0:9178，并自动在系统防火墙（ufw）放行该端口，公网任意地址都能访问注册、登录、设备控制等接口。\n" +
+              "强烈建议先配置反向代理 + 鉴权（如 Caddy + BasicAuth、Nginx + IP 白名单）。关闭开关会自动恢复本机监听并收回防火墙放行。",
             confirmText: "确认暴露",
             cancelText: "取消",
           });

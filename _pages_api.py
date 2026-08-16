@@ -462,18 +462,24 @@ async def page_coyote_enable(plugin):
 async def page_coyote_disable(plugin):
     """关闭 CCDG WebUI 总开关。
 
-    关闭时把监听地址一并恢复为 127.0.0.1，避免残留 0.0.0.0 暴露配置。
+    关闭时把监听地址一并恢复为 127.0.0.1，避免残留 0.0.0.0 暴露配置；
+    同时收回暴露开关可能留下的 ufw 端口放行（尽力而为，失败仅记日志）。
     """
     try:
+        port = int(plugin.config.get("dglab_webui_port", 9178))
         result = await _save_and_reload(
             plugin,
             {"dglab_webui_enabled": False, "dglab_webui_host": "127.0.0.1"},
         )
+        fw = await _relay_ufw_allow(port, allow=False)
+        if not fw["changed"] and "可达" not in fw["note"]:
+            logger.warning("[Pages] WebUI 端口 %s ufw 规则收回失败: %s", port, fw["note"])
         return json_response(
             {
                 "ok": True,
                 "changed": result["changed"],
                 "reloaded": result["reloaded"],
+                "fw": fw,
                 "message": "已关闭 CCDG WebUI",
             }
         )
@@ -483,14 +489,21 @@ async def page_coyote_disable(plugin):
 
 
 async def page_coyote_expose(plugin):
-    """暴露公网开关：打开后监听 0.0.0.0，自动探测公网 IP 并返回跳转链接。
+    """暴露公网开关：打开后监听 0.0.0.0，自动 ufw 放行端口，探测公网 IP 返回链接。
 
     若 WebUI 尚未启用，会一并自动启用（因为暴露的前提是 WebUI 在运行）。
+    防火墙放行复用中转服务器暴露开关逻辑：先放行并以 `ufw status` 实际查询
+    校验生效，失败则不落配置、显式报错（避免开关显示已开、实际端口未放行）。
     """
     try:
         payload = await request.json(default={}) or {}
         port = int(payload.get("port") or plugin.config.get("dglab_webui_port", 9178))
         host = str(payload.get("host") or "0.0.0.0")
+        # 先放行防火墙：失败时不改配置，前端开关保持关闭状态
+        fw = await _relay_ufw_allow(port, allow=True, comment=WEBUI_UFW_COMMENT)
+        if not fw["changed"] and "可达" not in fw["note"]:
+            logger.error("[Pages] WebUI 端口 %s 放行失败: %s", port, fw["note"])
+            return error_response(f"放行端口 {port} 失败: {fw['note']}", status_code=500)
         result = await _save_and_reload(
             plugin,
             {
@@ -502,7 +515,7 @@ async def page_coyote_expose(plugin):
         ip = await plugin.get_public_ip()
         if host in ("0.0.0.0", "::"):
             logger.warning(
-                "[Pages] ⚠️ 郊狼 WebUI 已暴露公网（%s:%s）！"
+                "[Pages] ⚠️ 郊狼 WebUI 已暴露公网（%s:%s，ufw 已放行）！"
                 "请确保已配置反代 + 鉴权。",
                 host,
                 port,
@@ -517,7 +530,9 @@ async def page_coyote_expose(plugin):
                 "host": host,
                 "port": port,
                 "url": url,
-                "warning": "已暴露公网，请务必配置反向代理与访问控制！",
+                "fw": fw,
+                "warning": "已暴露公网，请务必配置反向代理与访问控制！"
+                + (f"（{fw['note']}）" if fw["note"] else ""),
             }
         )
     except Exception as e:
@@ -526,18 +541,31 @@ async def page_coyote_expose(plugin):
 
 
 async def page_coyote_unexpose(plugin):
-    """关闭暴露公网开关：监听恢复 127.0.0.1，WebUI 总开关状态保留。"""
+    """关闭暴露公网开关：监听恢复 127.0.0.1 并收回 ufw 端口放行，WebUI 总开关状态保留。
+
+    先恢复监听地址（立即切断公网入口），再删除防火墙规则；规则删除失败不
+    阻断关闭操作（监听已回本机，端口不再对外响应），仅在回执中提示。
+    """
     try:
+        payload = await request.json(default={}) or {}
+        port = int(payload.get("port") or plugin.config.get("dglab_webui_port", 9178))
         result = await _save_and_reload(
             plugin,
             {"dglab_webui_host": "127.0.0.1"},
         )
+        fw = await _relay_ufw_allow(port, allow=False)
+        fw_note = ""
+        if not fw["changed"] and "可达" not in fw["note"]:
+            logger.warning("[Pages] WebUI 端口 %s ufw 规则收回失败: %s", port, fw["note"])
+            fw_note = fw["note"]
         return json_response(
             {
                 "ok": True,
                 "changed": result["changed"],
                 "reloaded": result["reloaded"],
-                "message": "已取消公网暴露，恢复本机监听",
+                "fw": fw,
+                "message": "已取消公网暴露，恢复本机监听"
+                + (f"；但防火墙规则收回失败: {fw_note}" if fw_note else ""),
             }
         )
     except Exception as e:
@@ -562,6 +590,7 @@ RELAY_UNIT_CANDIDATES = {
 RELAY_BUN_PATH = "/root/.bun/bin/bun"
 RELAY_UNIT_DIR = "/etc/systemd/system"
 RELAY_UFW_COMMENT = "CurrentCortex-DGLab-relay"
+WEBUI_UFW_COMMENT = "CurrentCortex-DGLab-webui"
 
 
 def _relay_dir(version: str) -> str:
@@ -690,7 +719,7 @@ async def _relay_ufw_state() -> Dict[str, Any]:
     return {"available": True, "active": bool(active and "inactive" not in out.lower())}
 
 
-async def _relay_ufw_allow(port: int, allow: bool) -> Dict[str, Any]:
+async def _relay_ufw_allow(port: int, allow: bool, comment: str = RELAY_UFW_COMMENT) -> Dict[str, Any]:
     """放行/收回端口。返回 {changed, note};changed=True 仅代表规则已实际生效。"""
     state = await _relay_ufw_state()
     if not state["available"]:
@@ -699,7 +728,7 @@ async def _relay_ufw_allow(port: int, allow: bool) -> Dict[str, Any]:
         return {"changed": False, "note": "ufw 未启用,端口本就对外可达"}
     if allow:
         rc, out, err = await _run_cmd(
-            ["ufw", "allow", f"{port}/tcp", "comment", RELAY_UFW_COMMENT], timeout=15
+            ["ufw", "allow", f"{port}/tcp", "comment", comment], timeout=15
         )
     else:
         rc, out, err = await _run_cmd(["ufw", "delete", "allow", f"{port}/tcp"], timeout=15)
@@ -1103,9 +1132,10 @@ _HELP_DOCS: List[Dict[str, Any]] = [
             },
             {
                 "q": "开启公网暴露有什么风险？",
-                "a": "0.0.0.0 监听会让任何人都能访问 WebUI 的注册/登录/设备接口。"
+                "a": "打开暴露开关后，插件会监听 0.0.0.0 并自动在系统防火墙（ufw）放行对应端口，"
+                     "任何人都能访问 WebUI 的注册/登录/设备接口。"
                      "必须前面挂反代 + 鉴权（推荐 Cloudflare Zero Trust、Caddy + BasicAuth、Nginx + IP 白名单）。"
-                     "本插件的 Pages「郊狼控制」开关会自动写 0.0.0.0 并给出公网 IP，"
+                     "关闭开关会自动恢复 127.0.0.1 并收回防火墙放行，"
                      "但具体安全由用户自己负责。",
             },
         ],
