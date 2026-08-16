@@ -44,7 +44,6 @@ NETEASE_API_URL = "https://api.bileizhen.top/api/netease"
 NETEASE_SEARCH_URL = "https://api.bileizhen.top/api/netease/search"
 KUGOU_API_URL = "https://api.bileizhen.top/api/kugou"
 KUGOU_SEARCH_URL = "https://api.bileizhen.top/api/kugou/search"
-JMCOMIC_API_BASE = "https://api.bileizhen.top/api/jmcomic"
 PIXIV_ARTWORK_URL = "https://www.pixiv.net/artworks/{}"
 
 HITOKOTO_CATEGORIES = {
@@ -81,14 +80,6 @@ COMMAND_CATEGORIES = [
             {"cmd": "/music", "alias": "音乐", "desc": "搜索音乐并获取歌曲详情或音频"},
             {"cmd": "/点歌", "alias": "—", "desc": "快捷点歌，直接返回语音条"},
             {"cmd": "/音源", "alias": "—", "desc": "查看或切换点歌音源（auto/网易云/酷狗）"},
-        ],
-    },
-    {
-        "icon": "book",
-        "title": "漫画",
-        "commands": [
-            {"cmd": "/jm", "alias": "漫画", "desc": "搜索 JMComic 漫画、查看详情或章节"},
-            {"cmd": "/jmcommend", "alias": "漫画推荐", "desc": "随机推荐一部 JMComic 漫画"},
         ],
     },
     {
@@ -378,66 +369,6 @@ FEMBOY_HELP_TEXT = """👗 男娘图片 使用说明
   • 每次调用都会实时获取随机图片
   • 需要有效的 API 密钥才能使用此功能
   • 如遇问题可发送 /femboy help 查看帮助"""
-
-JMCOMIC_HELP_TEXT = """📚 JMComic 漫画 使用说明
-
-📌 基本命令（别名：/漫画）
-  /jm <章节ID>            获取章节图片（最简写法）
-  /jm chapter <章节ID>    同上（别名：章节）
-  /jm con                 继续查看上一章节的后续图片（别名：续 / 继续）
-  /jm search <关键词>     搜索漫画（别名：搜索）
-  /jm detail <漫画ID>     获取漫画详情（别名：详情）
-  /jm help               显示此帮助信息
-
-📌 中文用法示例
-  /jm 413828                  获取章节ID为413828的图片
-  /jm con                     继续查看剩余图片
-  /漫画 搜索 原神            搜索「原神」相关漫画
-  /漫画 详情 413828          获取漫画详情
-  /漫画 章节 413828          获取章节图片
-
-📌 搜索参数
-  /jm search <关键词> [page:<页码>]
-  • 关键词：搜索漫画标题、作者等
-  • page：页码，默认为 1
-
-📌 使用示例
-  搜索漫画：
-    /jm search 原神              搜索「原神」相关漫画
-    /jm search 萝莉 page:2       搜索第2页结果
-
-  查看详情：
-    /jm detail 413828            获取漫画ID为413828的详情
-
-  获取章节图片：
-    /jm 413828                   最简写法，获取章节ID为413828的图片
-    /jm chapter 413828           等价写法
-
-📌 章节图片分段
-  • 整章图片较多时，每条命令最多下发 20 张（可配置 jm_page_size）
-  • 仍有剩余会提示，发送 /jm con 即可继续查看下一段
-  • 图片统一转码为 JPEG（QQ 合并转发对 webp 支持不佳），超 2MB 再降质压缩
-
-📌 返回信息
-  搜索结果：
-    • 漫画ID、标题、作者
-    • 分类信息
-
-  漫画详情：
-    • 标题、作者、描述
-    • 章节列表
-
-  章节图片：
-    • 合并转发批量发送本段全部图片
-
-⚠️ 注意事项
-  • 内容来源于第三方，请遵守相关法律法规
-  • API 响应可能较慢，请耐心等待
-  • 续看游标约 30 分钟有效，过期需重新 /jm <章节ID>
-  • 如遇问题可发送 /jm help 查看帮助
-
-📌 相关命令
-  /jmcommend（别名：/漫画推荐）  随机推荐一部漫画"""
 
 MEDIA_PARSER_HELP_TEXT = """🔍 媒体内容解析 使用说明
 
@@ -1140,141 +1071,6 @@ class KugouAPIClient:
         return songs
 
 
-class JMComicAPIClient:
-    """JMComic 漫画 API 客户端"""
-
-    def __init__(self, api_key: str = "", timeout: int = 30):
-        self._timeout = aiohttp.ClientTimeout(total=timeout)
-        self._headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Accept": "application/json",
-            "x-api-key": api_key,
-        }
-
-    async def search(self, query: str, page: int = 1) -> Dict[str, Any]:
-        """搜索漫画"""
-        if not query or not query.strip():
-            raise JMComicAPIError("搜索关键词不能为空")
-
-        params = {"query": query.strip(), "page": page}
-        logger.debug(f"[JMComic] Searching: query={query}, page={page}")
-
-        async with aiohttp.ClientSession(
-            timeout=self._timeout, headers=self._headers
-        ) as session:
-            try:
-                async with session.get(
-                    f"{JMCOMIC_API_BASE}/search", params=params
-                ) as resp:
-                    if resp.status != 200:
-                        error_text = await resp.text()
-                        logger.error(
-                            f"[JMComic] Search API returned status {resp.status}: {error_text[:500]}"
-                        )
-                        raise JMComicAPIError(
-                            f"API 请求失败 (HTTP {resp.status})",
-                            status_code=resp.status,
-                        )
-
-                    data = await resp.json()
-                    if not isinstance(data, dict):
-                        raise JMComicAPIError("API 返回数据格式异常")
-
-                    if not data.get("success"):
-                        msg = data.get("message", "未知错误")
-                        raise JMComicAPIError(f"搜索失败: {msg}")
-
-                    return data.get("data", {})
-
-            except aiohttp.ClientError as e:
-                logger.error(f"[JMComic] Search network error: {e}")
-                raise JMComicAPIError(f"网络请求失败: {str(e)}", status_code=0) from e
-            except asyncio.TimeoutError:
-                logger.error("[JMComic] Search request timeout")
-                raise JMComicAPIError("API 请求超时，请稍后再试", status_code=0)
-
-    async def get_detail(self, comic_id: str) -> Dict[str, Any]:
-        """获取漫画详情"""
-        if not comic_id or not comic_id.strip():
-            raise JMComicAPIError("漫画ID不能为空")
-
-        comic_id = comic_id.strip()
-        logger.debug(f"[JMComic] Fetching detail: id={comic_id}")
-
-        async with aiohttp.ClientSession(
-            timeout=self._timeout, headers=self._headers
-        ) as session:
-            try:
-                async with session.get(f"{JMCOMIC_API_BASE}/album/{comic_id}") as resp:
-                    if resp.status != 200:
-                        error_text = await resp.text()
-                        logger.error(
-                            f"[JMComic] Detail API returned status {resp.status}: {error_text[:500]}"
-                        )
-                        raise JMComicAPIError(
-                            f"API 请求失败 (HTTP {resp.status})",
-                            status_code=resp.status,
-                        )
-
-                    data = await resp.json()
-                    if not isinstance(data, dict):
-                        raise JMComicAPIError("API 返回数据格式异常")
-
-                    if not data.get("success"):
-                        msg = data.get("message", "未知错误")
-                        raise JMComicAPIError(f"获取详情失败: {msg}")
-
-                    return data.get("data", {})
-
-            except aiohttp.ClientError as e:
-                logger.error(f"[JMComic] Detail network error: {e}")
-                raise JMComicAPIError(f"网络请求失败: {str(e)}", status_code=0) from e
-            except asyncio.TimeoutError:
-                logger.error("[JMComic] Detail request timeout")
-                raise JMComicAPIError("API 请求超时，请稍后再试", status_code=0)
-
-    async def get_chapter(self, chapter_id: str) -> Dict[str, Any]:
-        """获取章节图片列表"""
-        if not chapter_id or not chapter_id.strip():
-            raise JMComicAPIError("章节ID不能为空")
-
-        chapter_id = chapter_id.strip()
-        params = {"chapter": "all"}
-        logger.debug(f"[JMComic] Fetching chapter: id={chapter_id}")
-
-        async with aiohttp.ClientSession(
-            timeout=self._timeout, headers=self._headers
-        ) as session:
-            try:
-                async with session.get(
-                    f"{JMCOMIC_API_BASE}/images/{chapter_id}", params=params
-                ) as resp:
-                    if resp.status != 200:
-                        error_text = await resp.text()
-                        logger.error(
-                            f"[JMComic] Chapter API returned status {resp.status}: {error_text[:500]}"
-                        )
-                        raise JMComicAPIError(
-                            f"API 请求失败 (HTTP {resp.status})",
-                            status_code=resp.status,
-                        )
-
-                    data = await resp.json()
-                    if not isinstance(data, dict):
-                        raise JMComicAPIError("API 返回数据格式异常")
-
-                    if not data.get("success"):
-                        msg = data.get("message", "未知错误")
-                        raise JMComicAPIError(f"获取章节失败: {msg}")
-
-                    return data.get("data", {})
-
-            except aiohttp.ClientError as e:
-                logger.error(f"[JMComic] Chapter network error: {e}")
-                raise JMComicAPIError(f"网络请求失败: {str(e)}", status_code=0) from e
-            except asyncio.TimeoutError:
-                logger.error("[JMComic] Chapter request timeout")
-                raise JMComicAPIError("API 请求超时，请稍后再试", status_code=0)
 
 
 class NeteaseAPIError(Exception):
@@ -1307,10 +1103,6 @@ class PixivAPIError(Exception):
         self.status_code = status_code
 
 
-class JMComicAPIError(Exception):
-    def __init__(self, message: str, status_code: int = 0):
-        super().__init__(message)
-        self.status_code = status_code
 
 
 def _format_api_key_not_configured(feature_name: str) -> str:
@@ -1335,33 +1127,13 @@ def _remove_file_safe(file_path: str) -> None:
         pass
 
 
-def _track_jm_temp_file(event: AstrMessageEvent, path: str) -> None:
-    """把章节临时图片交给框架，在整条流水线发送完成后统一清理。
-
-    Comp.Image.fromFileSystem 是延迟读取的：实际的文件读取（转 base64）
-    发生在发送阶段 Node.to_dict() 中，远晚于此处构建节点的时刻。因此不能
-    在 _format_jm_chapter 返回前删除，否则合并转发节点内的图片将为空。
-
-    优先使用框架的 track_temporary_local_file（发送完成后由 scheduler 统一删除）。
-    若当前 AstrBot 版本未提供该 API，则不主动删除，交由系统临时目录按 TTL 清理。
-    """
-    tracker = getattr(event, "track_temporary_local_file", None)
-    if callable(tracker):
-        try:
-            tracker(path)
-        except Exception:
-            pass
-
-
-# JMComic 章节续看游标的有效期：章节图片 URL 有时效，过期则丢弃游标。
-_JM_CHAPTER_CURSOR_TTL = 30 * 60
 
 
 @register(
     "astrbot_plugin_currentcortex",
     "Rcst20",
-    "多功能 AstrBot 插件（CurrentCortex）—— Pixiv 随机图片 ·网易云点歌 ·JMComic 漫画 ·小红书/B站/抖音媒体解析 ·每日一言 ·天气 ·男娘 ·DG-LAB（郊狼） 设备管理 ·跨群聊记忆 ·按群聊开关。基于 LeiZ API。",
-    "2.0.3",
+    "多功能 AstrBot 插件（CurrentCortex）—— Pixiv 随机图片 ·网易云点歌 ·小红书/B站/抖音媒体解析 ·每日一言 ·天气 ·男娘 ·DG-LAB（郊狼） 设备管理 ·跨群聊记忆 ·按群聊开关。基于 LeiZ API。",
+    "2.0.4",
 )
 class CurrentCortexPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -1379,16 +1151,6 @@ class CurrentCortexPlugin(Star):
         if self._llm_tools_enable:
             logger.info("[LLMTools] 已启用 LLM 工具（图片/点歌/电击）")
 
-        # JMComic 章节图片下发：单张压缩阈值 + 每命令分段大小
-        # 单条合并转发节点过多 / payload 过大会被 QQ 服务端拒绝（retcode=1200），
-        # 故 page_size 取偏保守的 20；图片统一转 JPEG 防止 webp 触发风控。
-        self._jm_image_max_bytes = int(
-            config.get("jm_image_max_bytes", 2 * 1024 * 1024)
-        )
-        self._jm_page_size = max(1, int(config.get("jm_page_size", 20)))
-        # 章节续看游标：{session_id: {"chapter_id", "images", "offset", "ts"}}
-        # 仅内存保存，章节 URL 有时效；超过 TTL 自动清理。
-        self._jm_chapter_cursor: Dict[str, dict] = {}
         # /音乐 文件 模式：原始文件（如 flac）过大时 QQ/NapCat 端常 retcode=1200 失败，
         # 超过该阈值则转码为 128kbps MP3 再发送（需 ffmpeg）。0 = 不限制。
         self._music_file_max_bytes = max(0, int(config.get("music_file_max_bytes", 25 * 1024 * 1024)))
@@ -1426,7 +1188,7 @@ class CurrentCortexPlugin(Star):
             # 未配置统一 API Key：禁用所有依赖 LeiZ 接口的客户端，相关命令会在
             # 调用时通过守卫提示用户配置。
             logger.warning(
-                "⚠️ 未配置 LeiZ API 统一密钥 (leiz_api_key)，Pixiv/一言/天气/男娘/点歌/JMComic "
+                "⚠️ 未配置 LeiZ API 统一密钥 (leiz_api_key)，Pixiv/一言/天气/男娘/点歌 "
                 "等全部 LeiZ 接口命令将不可用"
             )
             logger.warning(
@@ -1439,7 +1201,6 @@ class CurrentCortexPlugin(Star):
             self._femboy_client = None
             self._netease_client = None
             self._kugou_client = None
-            self._jmcomic_client = None
         else:
             self._api_client = PixivAPIClient(
                 api_key=leiz_api_key, timeout=self._request_timeout
@@ -1457,9 +1218,6 @@ class CurrentCortexPlugin(Star):
                 api_key=leiz_api_key, timeout=self._request_timeout
             )
             self._kugou_client = KugouAPIClient(
-                api_key=leiz_api_key, timeout=self._request_timeout
-            )
-            self._jmcomic_client = JMComicAPIClient(
                 api_key=leiz_api_key, timeout=self._request_timeout
             )
             logger.info("✅ LeiZ API 客户端初始化成功（统一 x-api-key 鉴权）")
@@ -4117,8 +3875,6 @@ class CurrentCortexPlugin(Star):
 
         # 所有已知命令名（英文+中文别名），按长度降序排列避免前缀误匹配
         command_names = [
-            "jmcommend",
-            "漫画推荐",
             "hitokoto",
             "weather",
             "pixiv",
@@ -4131,9 +3887,7 @@ class CurrentCortexPlugin(Star):
             "男娘",
             "音乐",
             "点歌",
-            "漫画",
             "电击",
-            "jm",
         ]
 
         # 尝试剥离命令名，提取参数部分
@@ -4341,623 +4095,6 @@ class CurrentCortexPlugin(Star):
             return "🔞 [混合模式] 可能包含 R-18 内容"
         return ""
 
-    @filter.command("jm", alias={"漫画"})
-    async def jm_command(self, event: AstrMessageEvent):
-        """搜索 JMComic 漫画、查看详情或获取章节内容。"""
-        user_name = event.get_sender_name()
-        message_str = event.message_str.strip()
-
-        logger.debug(f"[JMComic] 收到消息: '{message_str}' from {user_name}")
-
-        if self._is_help_command(message_str):
-            logger.info(f"[JMComic] Help command triggered by {user_name}")
-            yield event.plain_result(self._with_promo(JMCOMIC_HELP_TEXT))
-            return
-
-        if not self._jmcomic_client:
-            logger.warning(f"[JMComic] API client not initialized for user {user_name}")
-            yield event.plain_result(self._with_promo(_format_api_key_not_configured("JMComic 漫画")))
-            return
-
-        try:
-            action, params = self._parse_jm_params(message_str)
-
-            if action == "search":
-                query = params.get("query", "")
-                page = params.get("page", 1)
-                if not query:
-                    yield event.plain_result(
-                        "❌ 请输入搜索关键词\n💡 用法：/jm search 关键词\n💡 发送 /jm help 查看帮助"
-                    )
-                    return
-
-                logger.info(
-                    f"[JMComic] Searching '{query}' page={page} for user {user_name}"
-                )
-                data = await self._jmcomic_client.search(query, page)
-                response_text = self._format_jm_search_results(data, query, page)
-                yield event.plain_result(response_text)
-
-            elif action == "detail":
-                comic_id = params.get("id", "")
-                if not comic_id:
-                    yield event.plain_result(
-                        "❌ 请输入漫画ID\n💡 用法：/jm detail 漫画ID\n💡 发送 /jm help 查看帮助"
-                    )
-                    return
-
-                logger.info(
-                    f"[JMComic] Fetching detail for id={comic_id}, user={user_name}"
-                )
-                data = await self._jmcomic_client.get_detail(comic_id)
-                response_text = self._format_jm_detail(data)
-                yield event.plain_result(response_text)
-
-            elif action == "chapter":
-                chapter_id = params.get("id", "")
-                if not chapter_id:
-                    yield event.plain_result(
-                        "❌ 请输入章节ID\n💡 用法：/jm 章节ID（或 /jm chapter 章节ID）\n💡 发送 /jm help 查看帮助"
-                    )
-                    return
-
-                logger.info(
-                    f"[JMComic] Fetching chapter id={chapter_id}, user={user_name}"
-                )
-                data = await self._jmcomic_client.get_chapter(chapter_id)
-                images = self._extract_jm_images(data)
-                if not images:
-                    yield event.plain_result("⚠️ 该章节暂无图片数据")
-                    return
-
-                response_items, next_offset = await self._format_jm_chapter(
-                    event, images, offset=0
-                )
-                for item in response_items:
-                    yield item
-
-                # 仍有剩余：记录游标供 /jm con 续看（仅内存、带 TTL）
-                if next_offset < len(images):
-                    self._set_jm_chapter_cursor(event, chapter_id, images, next_offset)
-
-            elif action == "continue":
-                cursor = self._get_jm_chapter_cursor(event)
-                if not cursor:
-                    yield event.plain_result(
-                        "❌ 暂无可续看的章节\n💡 请先发送 /jm 章节ID 获取章节图片\n💡 发送 /jm help 查看帮助"
-                    )
-                    return
-
-                chapter_id = cursor["chapter_id"]
-                images = cursor["images"]
-                offset = cursor["offset"]
-                logger.info(
-                    f"[JMComic] Continue chapter id={chapter_id} offset={offset} "
-                    f"for user {user_name}"
-                )
-                response_items, next_offset = await self._format_jm_chapter(
-                    event, images, offset=offset
-                )
-                for item in response_items:
-                    yield item
-
-                if next_offset < len(images):
-                    self._set_jm_chapter_cursor(event, chapter_id, images, next_offset)
-                else:
-                    # 已是最后一段：清除游标
-                    self._clear_jm_chapter_cursor(event)
-
-            else:
-                yield event.plain_result(
-                    "❌ 未知子命令\n💡 可用命令：search(搜索) / detail(详情) / chapter(章节) / con(续看)\n💡 发送 /jm help 查看帮助"
-                )
-
-        except JMComicAPIError as e:
-            logger.error(f"[JMComic] API error for user {user_name}: {e}")
-            error_msg = f"❌ JMComic 请求失败\n📝 错误信息：{str(e)}"
-            if e.status_code:
-                error_msg += f"\n🔢 状态码：{e.status_code}"
-            error_msg += "\n💡 请稍后重试或发送 /jm help 查看帮助"
-            yield event.plain_result(error_msg)
-        except Exception as e:
-            logger.error(
-                f"[JMComic] Unexpected error for user {user_name}: {e}", exc_info=True
-            )
-            yield event.plain_result(
-                f"❌ 发生未知错误\n📝 错误信息：{str(e)}\n💡 请稍后重试"
-            )
-
-    def _parse_jm_params(self, message: str) -> tuple:
-        """解析 /jm 命令参数，返回 (action, params)"""
-        cleaned = re.sub(
-            r"^[/!！]\s*(jm|漫画)\s*", "", message.strip(), flags=re.IGNORECASE
-        )
-        cleaned = re.sub(r"^(jm|漫画)\s*", "", cleaned.strip(), flags=re.IGNORECASE)
-        cleaned = cleaned.strip()
-
-        if not cleaned or cleaned.lower() in ("help", "-h", "--help", "帮助"):
-            return ("help", {})
-
-        # 裸 ID 简化：/jm 413828 直接当作取章节图片（与旧写法 /jm chapter 413828 等效）
-        # JM 的章节/漫画 ID 均为纯数字，关键词搜索不会是纯数字，故无歧义。
-        if re.fullmatch(r"\d+", cleaned):
-            return ("chapter", {"id": cleaned})
-
-        # 解析子命令
-        parts = cleaned.split(None, 1)
-        action = parts[0].lower()
-        rest = parts[1] if len(parts) > 1 else ""
-
-        # 中文子命令别名映射
-        action_alias = {
-            "搜索": "search",
-            "详情": "detail",
-            "章节": "chapter",
-            "con": "continue",
-            "续": "continue",
-            "继续": "continue",
-        }
-        action = action_alias.get(action, action)
-
-        if action == "continue":
-            # /jm con（别名：续 / 继续）—— 续看上一章节剩余图片
-            return ("continue", {})
-
-        if action == "search":
-            # 解析 page 参数
-            page = 1
-            page_match = re.search(r"page\s*[:：]\s*(\d+)", rest, re.IGNORECASE)
-            if page_match:
-                page = max(1, int(page_match.group(1)))
-                rest = rest[: page_match.start()] + rest[page_match.end() :]
-
-            query = rest.strip()
-            return ("search", {"query": query, "page": page})
-
-        elif action == "detail":
-            comic_id = rest.strip()
-            return ("detail", {"id": comic_id})
-
-        elif action == "chapter":
-            chapter_id = rest.strip()
-            return ("chapter", {"id": chapter_id})
-
-        else:
-            # 如果第一个词不是已知子命令，当作搜索处理
-            return ("search", {"query": cleaned, "page": 1})
-
-    def _get_jm_session_key(self, event: AstrMessageEvent) -> str:
-        """获取章节续看游标的会话 key（区分群/私聊）。"""
-        return getattr(event, "session_id", "") or event.get_session_id()
-
-    def _set_jm_chapter_cursor(
-        self,
-        event: AstrMessageEvent,
-        chapter_id: str,
-        images: List[Any],
-        offset: int,
-    ) -> None:
-        """记录当前会话的章节续看游标（仅内存、带 TTL）。"""
-        self._jm_chapter_cursor[self._get_jm_session_key(event)] = {
-            "chapter_id": chapter_id,
-            "images": images,
-            "offset": offset,
-            "ts": time.time(),
-        }
-
-    def _get_jm_chapter_cursor(self, event: AstrMessageEvent) -> Optional[dict]:
-        """读取并校验当前会话的章节续看游标；过期返回 None。"""
-        key = self._get_jm_session_key(event)
-        cursor = self._jm_chapter_cursor.get(key)
-        if not cursor:
-            return None
-        # 过期清理（章节 URL 有时效，避免续看过期链接）
-        if time.time() - cursor.get("ts", 0) > _JM_CHAPTER_CURSOR_TTL:
-            self._jm_chapter_cursor.pop(key, None)
-            return None
-        return cursor
-
-    def _clear_jm_chapter_cursor(self, event: AstrMessageEvent) -> None:
-        """清除当前会话的章节续看游标。"""
-        self._jm_chapter_cursor.pop(self._get_jm_session_key(event), None)
-
-    def _format_jm_search_results(
-        self, data: Dict[str, Any], query: str, page: int
-    ) -> str:
-        """格式化搜索结果"""
-        results = data.get("results", [])
-        if not results:
-            return f"😕 未找到与「{query}」相关的漫画\n💡 请尝试其他关键词"
-
-        parts = [f"📚 搜索「{query}」结果（第{page}页）：\n"]
-        for i, item in enumerate(results[:20], 1):
-            comic_id = item.get("id", "")
-            title = item.get("title", "未知")
-            author = item.get("author", "N/A")
-            category = item.get("category", {})
-            cat_title = category.get("title", "") if isinstance(category, dict) else ""
-
-            parts.append(f"  {i}. 【{comic_id}】{title}")
-            info_parts = []
-            if author and author != "N/A":
-                info_parts.append(f"作者: {author}")
-            if cat_title:
-                info_parts.append(f"分类: {cat_title}")
-            if info_parts:
-                parts.append(f"     {' | '.join(info_parts)}")
-
-        parts.append(f"\n💡 使用 /jm detail <漫画ID> 查看详情")
-        if len(results) >= 20:
-            parts.append(f"💡 使用 /jm search {query} page:{page + 1} 查看下一页")
-
-        return "\n".join(parts)
-
-    def _format_jm_detail(self, data: Dict[str, Any]) -> str:
-        """格式化漫画详情"""
-        if not data:
-            return "⚠️ 未获取到漫画详情数据"
-
-        title = data.get("title", "未知标题")
-        author_raw = data.get("author", "未知作者")
-        if isinstance(author_raw, list):
-            author = " / ".join(author_raw) if author_raw else "未知作者"
-        else:
-            author = str(author_raw)
-        description = data.get("description", "")
-        tags = data.get("tags", [])
-        comic_id = data.get("id", "")
-        total_views = data.get("total_views", "")
-        likes = data.get("likes", "")
-        series = data.get("series", [])
-        related_list = data.get("related_list", [])
-
-        parts = [f"📖 漫画详情"]
-        if comic_id:
-            parts.append(f"🆔 ID：{comic_id}")
-        parts.append(f"📕 标题：{title}")
-        parts.append(f"👤 作者：{author}")
-
-        if total_views:
-            parts.append(f"👁️ 浏览：{total_views}")
-        if likes:
-            parts.append(f"❤️ 喜欢：{likes}")
-
-        if description:
-            desc_short = description[:200] + ("..." if len(description) > 200 else "")
-            parts.append(f"📝 简介：{desc_short}")
-
-        if tags:
-            if isinstance(tags, list):
-                tag_names = []
-                for t in tags[:10]:
-                    if isinstance(t, dict):
-                        tag_names.append(t.get("name", str(t)))
-                    else:
-                        tag_names.append(str(t))
-                parts.append(f"🏷️ 标签：{' / '.join(tag_names)}")
-
-        if series and isinstance(series, list):
-            parts.append(f"\n📑 系列（共{len(series)}部）：")
-            for i, s in enumerate(series[:10], 1):
-                if isinstance(s, dict):
-                    s_id = s.get("id", "")
-                    s_name = s.get("name", f"第{i}部")
-                    parts.append(f"  {i}. 【{s_id}】{s_name}")
-                else:
-                    parts.append(f"  {i}. {s}")
-            if len(series) > 10:
-                parts.append(f"  ... 还有 {len(series) - 10} 部")
-
-        parts.append(f"\n💡 使用 /jm chapter {comic_id} 获取章节图片")
-
-        return "\n".join(parts)
-
-    def _extract_jm_images(self, data: Dict[str, Any]) -> List[Any]:
-        """从章节接口返回中提取图片列表，兼容多种字段名。"""
-        if not isinstance(data, dict):
-            return []
-        images = data.get("images", [])
-        if not images:
-            for key in ("urls", "pages", "pics"):
-                if key in data and isinstance(data[key], list):
-                    images = data[key]
-                    break
-        return images or []
-
-    @staticmethod
-    def _extract_jm_image_url(img: Any) -> str:
-        """从单张图片项中提取 URL（优先已解密的 decoded_url）。"""
-        if isinstance(img, str):
-            return img
-        if isinstance(img, dict):
-            return img.get("decoded_url", "") or img.get("url", "")
-        return ""
-
-    @staticmethod
-    def _jm_image_extension(url: str) -> str:
-        """从图片 URL 推断扩展名，默认 .jpg。"""
-        url_no_query = url.lower().split("?", 1)[0]
-        for ext in (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"):
-            if url_no_query.endswith(ext):
-                return ext
-        return ".jpg"
-
-    async def _download_jm_image_to_temp(
-        self, url: str, idx: int, temp_dir: str
-    ) -> Optional[str]:
-        """下载单张章节图片到临时目录，失败返回 None。"""
-        if not url:
-            return None
-        temp_path = None
-        downloaded = False
-        try:
-            ext = self._jm_image_extension(url)
-            request_id = uuid.uuid4().hex[:12]
-            temp_path = os.path.join(temp_dir, f"jm_{idx + 1}_{request_id}{ext}")
-            timeout = aiohttp.ClientTimeout(total=30)
-            headers = {"User-Agent": "AstrBot-JMComic-Plugin/1.0"}
-            if self._leiz_api_key:
-                # 图片地址可能经 LeiZ 代理，统一附 x-api-key；对裸 CDN 无副作用。
-                headers["x-api-key"] = self._leiz_api_key
-            async with aiohttp.ClientSession(
-                timeout=timeout, headers=headers
-            ) as session:
-                async with session.get(url) as resp:
-                    if resp.status != 200:
-                        logger.warning(
-                            f"[JMComic] 下载图片失败: HTTP {resp.status} {url}"
-                        )
-                        return None
-                    with open(temp_path, "wb") as img_file:
-                        async for chunk in resp.content.iter_chunked(8192):
-                            img_file.write(chunk)
-                    downloaded = True
-            return temp_path
-        except Exception as e:
-            logger.warning(f"[JMComic] 下载图片异常 [{type(e).__name__}]: {e}")
-            return None
-        finally:
-            if temp_path and not downloaded:
-                self._remove_file(temp_path)
-
-    @staticmethod
-    def _prepare_image_for_forward(path: str, max_bytes: int) -> str:
-        """把章节图片转码为最适合 QQ 合并转发的形态。
-
-        两件事：
-        1. 统一转 JPEG —— QQ/QQNT 的合并转发节点对 webp 等格式兼容性差，
-           实测会触发 retcode=1200（res_id 已下发但腾讯拒绝）。JPEG 最稳。
-           仅当原图已是体积合规的 .jpg/.jpeg 时才直接复用，否则重编码。
-        2. 体积超 max_bytes 时逐档降质（90→…→50）直至达标或到下限。
-
-        损坏图片捕获异常并返回原路径，不阻断整批发送。
-        返回最终要发送的图片路径（可能与入参不同）。
-        """
-        try:
-            from PIL import Image
-        except ImportError:
-            logger.warning("[JMComic] 未安装 Pillow，跳过图片转码")
-            return path
-
-        try:
-            size = os.path.getsize(path)
-        except OSError:
-            return path
-
-        # 已是合规的 JPEG 且体积达标：直接复用，避免无谓重编码。
-        lower = path.lower()
-        if (lower.endswith(".jpg") or lower.endswith(".jpeg")) and size <= max_bytes:
-            return path
-
-        try:
-            with Image.open(path) as img:
-                rgb = img.convert("RGB")
-                # 输出到独立文件，避免与原 .jpg 同名覆盖（PIL 惰性加载期间
-                # 直接覆盖源文件不安全）。成功后删除原文件，由调用方 track 新路径。
-                base = os.path.splitext(path)[0]
-                out_path = f"{base}_{uuid.uuid4().hex[:8]}.jpg"
-                # 体积未超阈值：用固定高质量转码一次（纯格式转换，解决 webp）。
-                if size <= max_bytes:
-                    rgb.save(out_path, format="JPEG", quality=92, optimize=True)
-                    _remove_file_safe(path)
-                    return out_path
-                # 体积超阈值：逐档降质直至达标。
-                for quality in range(90, 45, -5):
-                    rgb.save(out_path, format="JPEG", quality=quality, optimize=True)
-                    if os.path.getsize(out_path) <= max_bytes:
-                        _remove_file_safe(path)
-                        return out_path
-                # 全部档位仍未达标：保留最后（最低质量 q50）结果作为兜底，
-                # 仍优于原图（已在循环里以 q50 写过一次）。
-                if os.path.getsize(out_path) < size:
-                    _remove_file_safe(path)
-                    return out_path
-                _remove_file_safe(out_path)
-                return path
-        except (OSError, ValueError) as e:
-            logger.warning(f"[JMComic] 转码图片异常 [{type(e).__name__}]: {e}")
-            return path
-
-    async def _format_jm_chapter(
-        self,
-        event: AstrMessageEvent,
-        images: List[Any],
-        offset: int = 0,
-    ) -> tuple:
-        """下发章节图片的某一段（offset 起，共 page_size 张）。
-
-        下载并按需压缩后，通过合并转发批量发送。返回 (results, next_offset)：
-        next_offset < total 表示仍有剩余，调用方应保留游标供 /jm con 续看。
-        """
-        total = len(images)
-        page_size = self._jm_page_size
-        end = min(offset + page_size, total)
-        segment = images[offset:end]
-
-        temp_dir = os.path.join(tempfile.gettempdir(), "astrbot_jm")
-        os.makedirs(temp_dir, exist_ok=True)
-
-        nodes = []
-        for i, img in enumerate(segment):
-            global_idx = offset + i  # 全章节范围内的序号（1 基用于展示）
-            img_url = self._extract_jm_image_url(img)
-            if not img_url:
-                continue
-            local_path = await self._download_jm_image_to_temp(
-                img_url, global_idx, temp_dir
-            )
-            if not local_path:
-                continue
-            final_path = self._prepare_image_for_forward(
-                local_path, self._jm_image_max_bytes
-            )
-            # 临时图片交由框架在整条流水线发送完成后统一清理。
-            # 不能在返回前删除：Comp.Image.fromFileSystem 是延迟读取的，
-            # 实际读取（转 base64）发生在后续发送阶段 Node.to_dict() 中，
-            # 提前删除会导致合并转发节点内图片为空。
-            _track_jm_temp_file(event, final_path)
-            node_content = [
-                Comp.Plain(text=f"第{global_idx + 1}/{total}张"),
-                Comp.Image.fromFileSystem(final_path),
-            ]
-            nodes.append(Comp.Node(content=node_content, name="JMComic", uin="0"))
-
-        if not nodes:
-            return (
-                [event.plain_result("⚠️ 未能下载/解析本段章节图片")],
-                offset,
-            )
-
-        # 仍有剩余：附「发送 /jm con 继续」提示节点
-        if end < total:
-            nodes.append(
-                Comp.Node(
-                    content=[
-                        Comp.Plain(
-                            text=(
-                                f"本章共{total}张，已展示第{offset + 1}~{end}张，"
-                                f"剩余{total - end}张。\n"
-                                "发送 /jm con 继续查看后续图片。"
-                            )
-                        )
-                    ],
-                    name="JMComic",
-                    uin="0",
-                )
-            )
-
-        forward_msg = Comp.Nodes(nodes=nodes)
-        header = f"🖼️ 章节图片（第{offset + 1}~{end}张 / 共{total}张）"
-        results = [
-            event.plain_result(header),
-            event.chain_result([forward_msg]),
-        ]
-        return results, end
-
-    @filter.command("jmcommend", alias={"漫画推荐"})
-    async def jmcommend_command(self, event: AstrMessageEvent):
-        """随机推荐一部 JMComic 漫画。"""
-        user_name = event.get_sender_name()
-        logger.debug(f"[JMComic] 随机推荐请求 from {user_name}")
-
-        if self._is_help_command(event.message_str.strip()):
-            yield event.plain_result(
-                "📚 JMComic 随机推荐\n\n"
-                "📌 用法：/jmcommend（别名：/漫画推荐）\n"
-                "📌 功能：随机推荐一部漫画作品\n\n"
-                "💡 返回漫画的标题、作者、分类等信息\n"
-                "💡 使用 /jm detail <ID>（或 /漫画 详情 <ID>）可查看详情"
-            )
-            return
-
-        if not self._jmcomic_client:
-            logger.warning(f"[JMComic] API client not initialized for user {user_name}")
-            yield event.plain_result(self._with_promo(_format_api_key_not_configured("JMComic 漫画")))
-            return
-
-        try:
-            # 使用随机关键词搜索来获取随机漫画
-            random_keywords = [
-                "原神",
-                "少女",
-                "恋爱",
-                "校园",
-                "冒险",
-                "魔法",
-                "日常",
-                "百合",
-                "奇幻",
-                "都市",
-                "青春",
-                "甜蜜",
-                "治愈",
-                "热血",
-                "悬疑",
-            ]
-            keyword = random.choice(random_keywords)
-            page = random.randint(1, 3)
-
-            logger.info(f"[JMComic] Random recommend: keyword={keyword}, page={page}")
-            data = await self._jmcomic_client.search(keyword, page)
-
-            results = data.get("results", [])
-            if not results:
-                # 如果没结果，用默认关键词重试
-                data = await self._jmcomic_client.search("漫画", 1)
-                results = data.get("results", [])
-
-            if not results:
-                yield event.plain_result("😕 暂时无法获取推荐，请稍后再试")
-                return
-
-            # 随机选一部
-            comic = random.choice(results)
-            comic_id = comic.get("id", "")
-            title = comic.get("title", "未知标题")
-            author = comic.get("author", "未知作者")
-            category = comic.get("category", {})
-            cat_title = (
-                category.get("title", "未知分类")
-                if isinstance(category, dict)
-                else "未知分类"
-            )
-            tags = comic.get("tags", [])
-
-            parts = [
-                "📚 随机漫画推荐",
-                "",
-                f"📕 标题：{title}",
-                f"👤 作者：{author}",
-                f"📂 分类：{cat_title}",
-                f"🆔 ID：{comic_id}",
-            ]
-
-            if tags and isinstance(tags, list):
-                tag_names = [
-                    t.get("name", str(t)) if isinstance(t, dict) else str(t)
-                    for t in tags[:8]
-                ]
-                if tag_names:
-                    parts.append(f"🏷️ 标签：{' / '.join(tag_names)}")
-
-            parts.append("")
-            parts.append(f"💡 使用 /jm detail {comic_id} 查看详情")
-            parts.append(f"💡 使用 /jm chapter {comic_id} 查看图片")
-
-            yield event.plain_result("\n".join(parts))
-
-        except JMComicAPIError as e:
-            logger.error(f"[JMComic] Recommend API error: {e}")
-            error_msg = f"❌ 获取推荐失败\n📝 错误信息：{str(e)}"
-            if e.status_code:
-                error_msg += f"\n🔢 状态码：{e.status_code}"
-            error_msg += "\n💡 请稍后重试"
-            yield event.plain_result(error_msg)
-        except Exception as e:
-            logger.error(f"[JMComic] Recommend unexpected error: {e}", exc_info=True)
-            yield event.plain_result(
-                f"❌ 发生未知错误\n📝 错误信息：{str(e)}\n💡 请稍后重试"
-            )
 
     @filter.command("解析")
     async def media_parse_command(self, event: AstrMessageEvent):
@@ -5298,7 +4435,6 @@ class CurrentCortexPlugin(Star):
             ("男娘", self._femboy_client, lambda c: c.fetch_femboy_image()),
             ("点歌", self._netease_client, lambda c: c.search_songs("在你的身边")),
             ("酷狗", self._kugou_client, lambda c: c.search_songs("在你的身边")),
-            ("JMComic", self._jmcomic_client, lambda c: c.search("姐姐")),
         ]
 
         async def _probe(name, client, call):

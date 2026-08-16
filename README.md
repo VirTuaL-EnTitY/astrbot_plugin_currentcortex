@@ -29,7 +29,7 @@
 >
 > 官方中转服务端在今年 5~7 月间迁移到了 v3 / v4 协议(6月2日 旧版 v2 服务端从官方仓库移除)。这期间使用新中转的用户一直无法正常绑定设备(报 `等待服务器分配 clientId 超时` 或 `HTTP 404`),**这是我跟进上游变更不及时的失误——没有主动关注官方仓库的动向,直到 8月13日 [#3](https://github.com/backrooms-yrc/astrbot_plugin_currentcortex/issues/3) 有用户反馈才发现问题,让大家等了两个多月。对此真诚地向各位道歉。**
 >
-> 问题已在 [v2.0.0](https://github.com/backrooms-yrc/astrbot_plugin_currentcortex/releases/tag/v2.0.0) 彻底修复:协议客户端重写为 V3 / V4 自动识别(旧 v2 中转同样兼容),无需改任何配置,升级即用;v4 中转需使用 **DG-LAB 4 APP** 扫描新版二维码,详见 [DG-LAB 章节](#8-dg-lab-设备管理--dglab-别名电击)。
+> 问题已在 [v2.0.0](https://github.com/backrooms-yrc/astrbot_plugin_currentcortex/releases/tag/v2.0.0) 彻底修复:协议客户端重写为 V3 / V4 自动识别(旧 v2 中转同样兼容),无需改任何配置,升级即用;v4 中转需使用 **DG-LAB 4 APP** 扫描新版二维码,详见 [DG-LAB 章节](#7-dg-lab-设备管理--dglab-别名电击)。
 >
 > 为避免同类问题再次发生,我已订阅上游仓库的变更通知,并为本模块补上了 36 个协议回归测试——今后官方协议再有调整,可以第一时间跟进、不再依赖用户报障。再次感谢 issue #3 的反馈,也感谢大家的包容。
 >
@@ -39,7 +39,7 @@
 
 **一个多功能 AstrBot 插件** — 集内容获取、媒体解析、设备控制与跨群记忆于一体。
 
-Pixiv 随机图片 · 每日一言 · 天气查询 · 男娘图片 · 网易云点歌 · JMComic 漫画 · 小红书/B站/抖音解析 · DG-LAB 设备管理 · 跨群聊记忆 · LLM 工具（AI 自主调用）· 语义分段回复
+Pixiv 随机图片 · 每日一言 · 天气查询 · 男娘图片 · 网易云点歌 · 小红书/B站/抖音解析 · DG-LAB 设备管理 · 跨群聊记忆 · LLM 工具（AI 自主调用）· 语义分段回复
 
 </div>
 
@@ -61,12 +61,11 @@ Pixiv 随机图片 · 每日一言 · 天气查询 · 男娘图片 · 网易云�
 - [🎯 功能详解](#-功能详解)
   - [1. Pixiv 随机图片](#1-pixiv-随机图片--pixiv-别名图片)
   - [2. 媒体内容解析](#2-媒体内容解析--解析-别名小红书b站抖音)
-  - [3. JMComic 漫画](#3-jmcomic-漫画--jm-别名漫画--jmcommend-别名漫画推荐)
-  - [4. 网易云音乐](#4-网易云音乐--music-别名音乐)
-  - [5. 每日一言](#5-每日一言--hitokoto-别名一言)
-  - [6. 天气查询](#6-天气查询--weather-别名天气)
-  - [7. 男娘图片](#7-男娘图片--femboy-别名男娘)
-  - [8. DG-LAB 设备管理](#8-dg-lab-设备管理--dglab-别名电击)
+  - [3. 网易云音乐](#3-网易云音乐--music-别名音乐)
+  - [4. 每日一言](#4-每日一言--hitokoto-别名一言)
+  - [5. 天气查询](#5-天气查询--weather-别名天气)
+  - [6. 男娘图片](#6-男娘图片--femboy-别名男娘)
+  - [7. DG-LAB 设备管理](#7-dg-lab-设备管理--dglab-别名电击)
 - [🖥️ 总 Pages](#️-总-pages)
 - [🧩 按群聊开关](#-按群聊独立开关)
 - [✂️ 分段回复](#️-分段回复)
@@ -87,7 +86,7 @@ Pixiv 随机图片 · 每日一言 · 天气查询 · 男娘图片 · 网易云�
 | --- | --- |
 | 🎨 **Pixiv 随机图片** | 随机图 / R18 / 标签筛选 / 关键词搜索 / 指定作者 / 长宽比筛选 / 排除 AI |
 | 🔍 **媒体解析** | 小红书图文视频 · B站视频信息 · 抖音无水印视频 |
-| 📚 **JMComic 漫画** | 搜索 / 详情 / 章节图片（合并转发分段下发）/ 随机推荐 |
+| 📚 **媒体内容解析** | 小红书 / B站 / 抖音链接解析 |
 | 🎵 **网易云点歌** | 点歌、搜索、语音条、原始文件、按 ID 获取 |
 | ✨ **每日一言** | 12 种分类（动画/漫画/游戏/文学/诗词/影视…） |
 | 🌤️ **天气查询** | 实时天气 + 未来 3 天预报 |
@@ -127,7 +126,7 @@ git clone https://github.com/backrooms-yrc/astrbot_plugin_currentcortex.git
 
 前往 **LeiZ API 官网** 👉 [https://api.bileizhen.top](https://api.bileizhen.top)
 
-在官网注册/登录后，进入「控制台 / API Keys」页面创建并复制你的 API Key（即 `x-api-key` 的值）。该 Key 为所有 LeiZ 接口（Pixiv / 一言 / 天气 / 男娘 / 网易云 / JMComic）统一使用，只需一个。
+在官网注册/登录后，进入「控制台 / API Keys」页面创建并复制你的 API Key（即 `x-api-key` 的值）。该 Key 为所有 LeiZ 接口（Pixiv / 一言 / 天气 / 男娘 / 网易云）统一使用，只需一个。
 
 > 💡 具体申请位置以官网页面为准（如「控制台 → API Keys / 令牌管理」）。若官网流程有变动，以官网说明为准。
 
@@ -135,7 +134,7 @@ git clone https://github.com/backrooms-yrc/astrbot_plugin_currentcortex.git
 
 打开 AstrBot 管理面板 → 插件管理 → 本插件 → 配置，把上一步获取的 Key 填入 **`leiz_api_key`** 字段，保存后重启插件。
 
-未配置时，Pixiv / 一言 / 天气 / 男娘 / 点歌 / JMComic 等全部 LeiZ 接口命令将不可用，调用时会给出配置引导提示。
+未配置时，Pixiv / 一言 / 天气 / 男娘 / 点歌 等全部 LeiZ 接口命令将不可用，调用时会给出配置引导提示。
 
 > ⚠️ **本插件是基于 LeiZ API 的社区（第三方）插件，与 LeiZ API 官方相互独立**。API Key 的注册/获取、接口计费、额度、上游故障等问题请到 [LeiZ API 官网](https://api.bileizhen.top) 及其官方渠道咨询；本插件的交流群仅处理插件本身的使用问题。
 
@@ -173,8 +172,6 @@ pip install websockets>=10.0   # 仅 DG-LAB 功能需要
 | `/xhs` | `/小红书` | 小红书解析 |
 | `/bilibili` | `/B站` `/b站` | B站视频解析 |
 | `/douyin` | `/抖音` | 抖音视频解析 |
-| `/jm` | `/漫画` | JMComic 漫画 |
-| `/jmcommend` | `/漫画推荐` | 漫画随机推荐 |
 | `/music` | `/音乐` | 音乐点歌（网易云/酷狗） |
 | `/点歌` | — | 快捷点歌（仅语音条） |
 | `/音源` | — | 切换点歌音源（auto/网易云/酷狗） |
@@ -298,53 +295,7 @@ pip install websockets>=10.0   # 仅 DG-LAB 功能需要
 
 ---
 
-### 3. JMComic 漫画 (`/jm`，别名 `/漫画` & `/jmcommend`，别名 `/漫画推荐`)
-
-通过 LeiZ JMComic API 搜索、获取漫画与章节图片。
-
-#### 基本指令
-
-| 指令 | 说明 |
-| --- | --- |
-| `/jm <章节ID>` | 最简写法，获取章节图片（合并转发发送） |
-| `/jm chapter <章节ID>`（`/漫画 章节`） | 等价写法 |
-| `/jm con`（`/漫画 续` `/漫画 继续`） | 继续查看上一章节的后续图片 |
-| `/jm search <关键词>`（`/漫画 搜索`） | 搜索漫画 |
-| `/jm search <关键词> page:<页码>` | 搜索漫画（指定页码） |
-| `/jm detail <漫画ID>`（`/漫画 详情`） | 获取漫画详情 |
-| `/jmcommend`（`/漫画推荐`） | 随机推荐一部漫画 |
-| `/jm help` | 显示帮助 |
-
-#### 使用示例
-
-```text
-# 搜索
-/jm search 原神              # 搜索「原神」相关
-/jm search 萝莉 page:2       # 搜索第 2 页
-
-# 详情
-/jm detail 413828            # 获取漫画详情
-
-# 章节图片
-/jm 413828                   # 最简写法
-/jm chapter 413828           # 等价写法
-/jm con                      # 续看后续图片（整章超过 20 张时）
-
-# 随机推荐
-/jmcommend
-```
-
-#### 章节图片分段与转码
-
-- **分段下发**：整章图片较多时，每条命令最多下发 `jm_page_size`（默认 20）张。仍有剩余会提示，发送 `/jm con` 继续查看，可重复直至看完。单条合并转发节点过多可能被 QQ 拒绝（`retcode=1200`），故默认值偏保守；如遇转发失败可调小该值。
-- **统一转 JPEG**：章节图片统一转码为 JPEG 再嵌入合并转发——QQ 合并转发对 webp 等格式兼容性差，会被服务端拒绝。超过 `jm_image_max_bytes`（默认 2MB）的图片会再逐档降质压缩。
-- **续看游标**：续看状态仅保存在内存中、约 **30 分钟** 有效，过期后需重新 `/jm <章节ID>` 获取。
-
-> ⚠️ 内容来源于第三方 API，请遵守相关法律法规。详情与章节接口响应可能较慢，请耐心等待。
-
----
-
-### 4. 音乐点歌 (`/music`，别名 `/音乐`)
+### 3. 音乐点歌 (`/music`，别名 `/音乐`)
 
 通过 LeiZ API 实现点歌、搜索与播放链接获取，支持**网易云**与**酷狗**双音源，并提供 `auto` 自动路由（网易云优先，失败转酷狗）。
 
@@ -395,7 +346,7 @@ pip install websockets>=10.0   # 仅 DG-LAB 功能需要
 
 ---
 
-### 5. 每日一言 (`/hitokoto`，别名 `/一言`)
+### 4. 每日一言 (`/hitokoto`，别名 `/一言`)
 
 获取来自社区贡献的随机一言。
 
@@ -425,7 +376,7 @@ pip install websockets>=10.0   # 仅 DG-LAB 功能需要
 
 ---
 
-### 6. 天气查询 (`/weather`，别名 `/天气`)
+### 5. 天气查询 (`/weather`，别名 `/天气`)
 
 实时查询城市天气及未来 3 天预报。
 
@@ -439,7 +390,7 @@ pip install websockets>=10.0   # 仅 DG-LAB 功能需要
 
 ---
 
-### 7. 男娘图片 (`/femboy`，别名 `/男娘`)
+### 6. 男娘图片 (`/femboy`，别名 `/男娘`)
 
 随机获取男娘主题图片（WebP）。
 
@@ -452,7 +403,7 @@ pip install websockets>=10.0   # 仅 DG-LAB 功能需要
 
 ---
 
-### 8. DG-LAB 设备管理 (`/dglab`，别名 `/电击`)
+### 7. DG-LAB 设备管理 (`/dglab`，别名 `/电击`)
 
 通过 DG-LAB Socket 协议实现对郊狼脉冲主机的完整控制。**需运行 [DG-LAB WebSocket 中转服务器](https://github.com/dungeonlab-open/dglab-websocket-server)**。
 
@@ -574,7 +525,7 @@ pip install websockets>=10.0   # 仅 DG-LAB 功能需要
 
 | 指令 | 说明 |
 | --- | --- |
-| `/开关 off`（或 `/开关 关`） | **关闭**本群全部插件命令（pixiv/解析/jm/music/… 均不再响应） |
+| `/开关 off`（或 `/开关 关`） | **关闭**本群全部插件命令（pixiv/解析/music/… 均不再响应） |
 | `/开关 on`（或 `/开关 开`） | **重新启用**本群插件命令 |
 | `/开关 status`（或 `/开关 状态`） | 查看本群当前状态 |
 | `/开关` | 无参数 = 查看状态 + 用法提示 |
@@ -723,7 +674,7 @@ pip install websockets>=10.0   # 仅 DG-LAB 功能需要
 /apitest help     # 显示帮助
 ```
 
-6 个接口（Pixiv / 一言 / 天气 / 男娘 / 点歌 / JMComic）并行探测，每个用最轻量的只读请求，不消耗图片/音频下载流量。状态含义：
+5 个接口（Pixiv / 一言 / 天气 / 男娘 / 点歌）并行探测，每个用最轻量的只读请求，不消耗图片/音频下载流量。状态含义：
 
 | 图标 | 状态 | 含义 |
 | --- | --- | --- |
@@ -754,13 +705,6 @@ pip install websockets>=10.0   # 仅 DG-LAB 功能需要
 | --- | --- | --- | --- |
 | `leiz_api_key` | string | （空） | **LeiZ API 统一密钥**（请求头 `x-api-key`），**必填**。在 [LeiZ API 官网](https://api.bileizhen.top) 注册后获取，所有 LeiZ 接口均需 |
 | `request_timeout` | int | 15 | API 请求超时时间（秒），影响所有功能 |
-
-### JMComic
-
-| 配置项 | 类型 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `jm_image_max_bytes` | int | 2097152 | 章节单张图片体积阈值（字节），超此再逐档降质压缩 |
-| `jm_page_size` | int | 20 | 章节图片每条命令下发的张数，遇转发失败可调小 |
 
 ### 网易云音乐
 
@@ -858,7 +802,7 @@ v1.2.0 及更早版本使用 JSON 字符串配置（已弃用）：
 <details>
 <summary><b>调用命令提示「功能未启用 / 未配置 API Key」？</b></summary>
 
-需先在 [LeiZ API 官网](https://api.bileizhen.top) 获取 API Key（见 [配置 API Key](#2-配置-api-key必填)），再填入配置面板的 `leiz_api_key` 字段，保存后重启插件。可用 `/apitest` 验证各接口连通性。Pixiv / 一言 / 天气 / 男娘 / 点歌 / JMComic 均依赖此 Key。
+需先在 [LeiZ API 官网](https://api.bileizhen.top) 获取 API Key（见 [配置 API Key](#2-配置-api-key必填)），再填入配置面板的 `leiz_api_key` 字段，保存后重启插件。可用 `/apitest` 验证各接口连通性。Pixiv / 一言 / 天气 / 男娘 / 点歌 均依赖此 Key。
 
 </details>
 
@@ -974,7 +918,7 @@ astrbot_plugin_currentcortex/
 - **PixivAPIClient** ([main.py](main.py))：Pixiv API 客户端，按过滤参数自动路由 GET 随机 / POST 筛选接口
 - **HitokotoAPIClient** / **WeatherAPIClient** / **FemboyAPIClient**：一言 / 天气 / 男娘 API 客户端
 - **NeteaseAPIClient**：网易云客户端，点歌带指数退避重试
-- **JMComicAPIClient**：JMComic 客户端（搜索 / 详情 / 章节）
+- **KugouAPIClient**：酷狗音乐客户端（搜索 / 播放链接）
 - **MediaParserManager** ([media_parser.py](media_parser.py))：小红书 / B站 / 抖音 链接解析
 - **CommandParser** ([main.py](main.py))：`key:value` 参数与快捷语法解析器
 
@@ -1018,7 +962,7 @@ astrbot_plugin_currentcortex/
 
 致谢：
 
-- [LeiZ API](https://api.bileizhen.top) — 提供 Pixiv / 一言 / 天气 / 男娘 / 网易云 / JMComic 等 API 服务
+- [LeiZ API](https://api.bileizhen.top) — 提供 Pixiv / 一言 / 天气 / 男娘 / 网易云 等 API 服务
 - [AstrBot](https://github.com/AstrBot) — 聊天机器人框架
 - [dglab-websocket-server](https://github.com/dungeonlab-open/dglab-websocket-server) — DG-LAB WebSocket 协议与中转服务器
 

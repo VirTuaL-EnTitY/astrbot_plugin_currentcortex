@@ -34,16 +34,6 @@
     "type": "int",
     "default": 15
   },
-  "jm_image_max_bytes": {
-    "description": "JMComic 章节单张图片压缩阈值（字节）。所有图片统一转码为 JPEG（防止 webp 在合并转发中被 QQ 拒绝），超过该体积的再逐档降质压缩。默认 2097152（2MB）",
-    "type": "int",
-    "default": 2097152
-  },
-  "jm_page_size": {
-    "description": "JMComic 章节图片每条命令（单条合并转发）下发的张数。单条转发节点过多/payload 过大会被 QQ 拒绝（retcode=1200），故默认 20；整章超过时发送 /jm con 续看。如遇转发失败可调小",
-    "type": "int",
-    "default": 20
-  },
   "music_file_max_bytes": {
     "description": "/音乐 文件 模式的单文件体积上限（字节）。原始音乐文件（如无损 flac）过大时，QQ/NapCat 端常以上传失败拒绝。超过此阈值会自动转码为 128kbps MP3 后再发送（需 ffmpeg）。QQ 下优先 OneBot 本地上传，绕过 Comp.File 的 HTTP 回调。默认 26214400（25MB）。设为 0 则不限制（不推荐，易发送失败）",
     "type": "int",
@@ -60,7 +50,7 @@
     "default": "auto"
   },
   "leiz_api_key": {
-    "description": "LeiZ API 统一密钥（请求头 x-api-key）。所有接口（含免费接口）均需携带。留空将禁用 Pixiv/一言/天气/男娘/点歌/JMComic 等全部 LeiZ 接口命令",
+    "description": "LeiZ API 统一密钥（请求头 x-api-key）。所有接口（含免费接口）均需携带。留空将禁用 Pixiv/一言/天气/男娘/点歌等全部 LeiZ 接口命令",
     "type": "string",
     "default": ""
   },

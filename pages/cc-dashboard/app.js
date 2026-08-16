@@ -394,9 +394,6 @@ const SETTINGS_META = {
   image_proxy: { name: "图片加速域名", hint: "下载图片时用的代理域名，一般保持默认即可。" },
   exclude_ai: { name: "排除 AI 作品", hint: "开启后，AI 生成的图片不会出现在随机图里。" },
   request_timeout: { name: "请求超时（秒）", hint: "连不上图库时等多久算超时。网络差可以适当调大。" },
-  // —— JMComic ——
-  jm_image_max_bytes: { name: "单张图片体积上限", hint: "漫画图片超过这个体积会自动压缩，防止发不出去。默认 2097152（2MB）。" },
-  jm_page_size: { name: "每批发图张数", hint: "一条消息最多带几张漫画图。发太多会被 QQ 拒收，默认 20。" },
   // —— 音乐 ——
   music_file_max_bytes: { name: "音乐文件体积上限", hint: "音乐文件超过这个体积会自动转成小体积 MP3 再发。默认 26214400（25MB）。" },
   music_cooldown: { name: "点歌冷却（秒）", hint: "同一会话连续点歌要间隔的秒数，防止刷屏把服务器拖垮。" },

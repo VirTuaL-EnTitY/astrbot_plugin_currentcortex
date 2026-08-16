@@ -67,12 +67,6 @@ _CONFIG_GROUPS: List[Dict[str, Any]] = [
         ],
     },
     {
-        "key": "jmcomic",
-        "title": "JMComic 漫画",
-        "icon": "book",
-        "items": ["jm_image_max_bytes", "jm_page_size"],
-    },
-    {
         "key": "music",
         "title": "网易云/酷狗 点歌",
         "icon": "music",
@@ -1106,10 +1100,6 @@ _HELP_DOCS: List[Dict[str, Any]] = [
             {
                 "q": "如何点歌？",
                 "a": "发送 /点歌 关键词 或 /music 关键词。默认走 auto 音源（网易云→酷狗）；/音源 可切换。",
-            },
-            {
-                "q": "如何看 JMComic 漫画？",
-                "a": "/jm 关键词 搜索；/jm ID 查看详情；/jm ID 章节号 阅读。整章超过 jm_page_size 张时按 /jm con 续看。",
             },
             {
                 "q": "如何解析小红书 / B站 / 抖音链接？",
