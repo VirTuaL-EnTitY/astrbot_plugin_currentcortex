@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+## [2.0.3] - 2026-08-17
+
+### 修复
+
+- CCDG WebUI 内置文档「连接方式」补齐具体配对操作步骤（对照 [DG-LAB 官方 Socket 文档](https://github.com/DG-LAB-OPENSOURCE/DG-LAB-OPENSOURCE/blob/a48a1701ea/socket/%E5%BF%AB%E9%80%9F%E4%BD%93%E9%AA%8C.md)）：新增「App 版本选择」（推荐下载 DG-LAB 4，<https://dungeon-lab.cn/>，3.x 与 4.x 不能互连）；v3 App 步骤（主界面 SOCKET → 连接服务器 → 相机图标扫码）；v4 App 步骤（Socket控制 → 创建Socket控制 → 扫描二维码）
+
 ## [2.0.2] - 2026-08-17
 
 ### 修复
