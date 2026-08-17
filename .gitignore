@@ -128,7 +128,6 @@ _dev_webui.py
 # ============================================
 test_*.py
 !test_music_audio.py
-!test_jm_chapter.py
 !test_reply_seg.py
 !test_dglab_protocol.py
 !test_relay_pages.py
