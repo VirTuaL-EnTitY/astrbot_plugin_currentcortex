@@ -650,8 +650,16 @@ def _parse_ufw_status(text: str, port: int) -> bool:
     return False
 
 
-async def _run_cmd(cmd: List[str], timeout: float = 30.0, cwd: str = None):
-    """执行外部命令,返回 (rc, stdout, stderr)。超时自动 kill。"""
+async def _run_cmd(
+    cmd: List[str],
+    timeout: float = 30.0,
+    cwd: str = None,
+    env: Dict[str, str] = None,
+):
+    """执行外部命令,返回 (rc, stdout, stderr)。超时自动 kill。
+
+    env 缺省时继承当前进程环境;传入时整体替换(需包含 PATH 等必要变量)。
+    """
     import asyncio
     import shutil as _shutil
 
@@ -661,6 +669,7 @@ async def _run_cmd(cmd: List[str], timeout: float = 30.0, cwd: str = None):
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             cwd=cwd,
+            env=env,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -679,6 +688,26 @@ async def _run_cmd(cmd: List[str], timeout: float = 30.0, cwd: str = None):
         out.decode("utf-8", "replace").strip(),
         err.decode("utf-8", "replace").strip(),
     )
+
+
+def _relay_deploy_env() -> Dict[str, str]:
+    """构建部署子进程环境:补齐 HOME/USER/BUN_INSTALL,并把 bun 目录放进 PATH。
+
+    AstrBot 常由 systemd/容器以精简环境启动(无 HOME),而 bun 官方安装脚本
+    以 `set -u` 运行并引用 $HOME,会报 "HOME: unbound variable"。中转部署的
+    路径与 systemd 单元都硬编码 root,故 HOME 固定为 /root。
+    """
+    bun_bin_dir = os.path.dirname(RELAY_BUN_PATH)
+    env = dict(os.environ)
+    env.setdefault("HOME", "/root")
+    env.setdefault("USER", "root")
+    env["BUN_INSTALL"] = os.path.dirname(bun_bin_dir)
+    env["PATH"] = (
+        bun_bin_dir
+        + ":"
+        + env.get("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+    )
+    return env
 
 
 def _relay_find_unit(version: str) -> str:
@@ -826,12 +855,16 @@ async def _relay_deploy_version(version: str) -> Dict[str, Any]:
         return {"ok": False, "steps": steps, "message": "系统未安装 git,无法克隆官方仓库"}
     step("git 就绪")
 
-    # bun:缺失则自动安装
+    # bun:缺失则自动安装(显式注入 HOME 等环境变量,避免精简环境下安装脚本报
+    # "HOME: unbound variable")
     bun = RELAY_BUN_PATH if os.path.exists(RELAY_BUN_PATH) else _shutil.which("bun")
+    deploy_env = _relay_deploy_env()
     if not bun:
         step("bun 未安装,开始自动安装(约 10~30s)")
         rc, out, err = await _run_cmd(
-            ["bash", "-c", "curl -fsSL https://bun.sh/install | bash"], timeout=180
+            ["bash", "-c", "curl -fsSL https://bun.sh/install | bash"],
+            timeout=180,
+            env=deploy_env,
         )
         if rc != 0 or not os.path.exists(RELAY_BUN_PATH):
             return {
@@ -868,9 +901,9 @@ async def _relay_deploy_version(version: str) -> Dict[str, Any]:
         f.write(_render_relay_env(version))
     step(f"写入 .env (PORT={RELAY_PORTS[version]})")
 
-    # 依赖
+    # 依赖(用解析出的绝对路径,插件自身 PATH 不含 bun 目录)
     step("安装依赖 (bun install)")
-    rc, out, err = await _run_cmd(["bun", "install"], cwd=target, timeout=120)
+    rc, out, err = await _run_cmd([bun, "install"], cwd=target, timeout=120, env=deploy_env)
     if rc != 0:
         return {"ok": False, "steps": steps, "message": f"bun install 失败: {err[:300]}"}
 

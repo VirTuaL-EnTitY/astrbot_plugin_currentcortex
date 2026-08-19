@@ -74,6 +74,17 @@ def test_env_render():
     check("公共项", "PREFIX=/" in v4 and "LOG_LEVEL=info" in v4)
 
 
+def test_deploy_env():
+    print("\n🌱 部署子进程环境")
+    # 模拟 AstrBot 精简环境(无 HOME/USER/PATH)
+    with patch.dict(os.environ, {}, clear=True):
+        env = P._relay_deploy_env()
+    check("HOME 已补齐", bool(env.get("HOME")), env)
+    check("USER 已补齐", bool(env.get("USER")), env)
+    check("BUN_INSTALL 指向 /root/.bun", env.get("BUN_INSTALL") == "/root/.bun", env)
+    check("PATH 含 bun 目录", env.get("PATH", "").startswith("/root/.bun/bin:"), env)
+
+
 def test_unit_render():
     print("\n⚙️ systemd 单元渲染")
     for v in ("v3", "v4"):
@@ -240,6 +251,7 @@ def main():
     print("🧪 Pages 中转服务器一键部署 · 纯函数测试")
     print("=" * 60)
     test_env_render()
+    test_deploy_env()
     test_unit_render()
     test_ufw_parse()
     test_find_unit()
