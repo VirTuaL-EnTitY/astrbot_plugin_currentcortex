@@ -2,7 +2,7 @@
   "llm_tools_enable": {
     "description": "【LLM 工具总开关】开启后，把插件的图片获取、点歌、电击控制等功能注册为大模型可调用的工具（function calling），AI 即可自主处理「发张图」「来首歌」「电一下」等自然语言请求。关闭则不生效（仅保留原有 / 命令）。电击控制涉及物理设备，请确认安全后开启",
     "type": "bool",
-    "default": false
+    "default": true
   },
   "default_r18": {
     "description": "默认 R18 等级（0=全年龄, 1=R18, 2=混合）",

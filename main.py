@@ -1147,7 +1147,7 @@ class CurrentCortexPlugin(Star):
         self._request_timeout = int(config.get("request_timeout", 15))
         # LLM 工具（function calling）总开关：装饰器在类加载时已注册工具，
         # 此开关控制工具执行时是否放行；关闭时工具返回提示而不执行。
-        self._llm_tools_enable = bool(config.get("llm_tools_enable", False))
+        self._llm_tools_enable = bool(config.get("llm_tools_enable", True))
         if self._llm_tools_enable:
             logger.info("[LLMTools] 已启用 LLM 工具（图片/点歌/电击）")
 
