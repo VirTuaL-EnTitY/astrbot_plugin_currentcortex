@@ -4,8 +4,10 @@
 # 需要配置（Settings → Secrets and variables → Actions）：
 #   Secret  AI_API_KEY   必填，API 密钥
 #   Variable AI_BASE_URL 可选，默认 https://api.openai.com/v1
-#                        例：DeepSeek https://api.deepseek.com/v1
-#                            智谱 GLM https://open.bigmodel.cn/api/paas/v4
+#                        OpenAI 兼容例：DeepSeek https://api.deepseek.com/v1
+#                                      智谱 GLM https://open.bigmodel.cn/api/paas/v4
+#                        Anthropic 兼容例（URL 含 anthropic 时自动切换协议）：
+#                                      z.ai https://api.z.ai/api/anthropic/v1
 #   Variable AI_MODEL    可选，默认 gpt-4o-mini
 name: AI 审查机器人
 
@@ -61,20 +63,40 @@ jobs:
           fi
           # 过大的 diff 截断，避免超出上下文
           head -c 60000 pr.diff > diff.trunc || true
-          jq -n --rawfile d diff.trunc '{model: env.AI_MODEL, messages: [
-            {role: "system", content: "你是代码审查助手。请审查给出的 git diff，用中文回复，格式为：## 🤖 AI 代码审查\\n### 改动概述\\n### 潜在风险\\n### 建议\\n内容简洁，只提真实问题，没有风险就明确说没有。"},
-            {role: "user", content: ("请审查以下拉取请求的 diff：\\n\\n" + $d)}
-          ], temperature: 0.2}' > req.json
-          code=$(curl -s -o resp.json -w '%{http_code}' \
-            --retry 2 --max-time 300 \
-            -H "Authorization: Bearer $AI_API_KEY" \
-            -H "Content-Type: application/json" \
-            "$AI_BASE_URL/chat/completions" \
-            -d @req.json)
-          if [ "$code" != "200" ]; then
-            echo "AI API 返回 $code："; cat resp.json; exit 0
+          SYSTEM_PROMPT="你是代码审查助手。请审查给出的 git diff，用中文回复，格式为：## 🤖 AI 代码审查\\n### 改动概述\\n### 潜在风险\\n### 建议\\n内容简洁，只提真实问题，没有风险就明确说没有。"
+          if [[ "$AI_BASE_URL" == *anthropic* ]]; then
+            # Anthropic 兼容端点（如 z.ai）：POST /messages
+            jq -n --arg s "$SYSTEM_PROMPT" --rawfile d diff.trunc \
+              '{model: env.AI_MODEL, max_tokens: 2048, temperature: 0.2, system: $s,
+                messages: [{role: "user", content: ("请审查以下拉取请求的 diff：\\n\\n" + $d)}]}' > req.json
+            code=$(curl -s -o resp.json -w '%{http_code}' \
+              --retry 2 --max-time 300 \
+              -H "x-api-key: $AI_API_KEY" \
+              -H "anthropic-version: 2023-06-01" \
+              -H "Content-Type: application/json" \
+              "$AI_BASE_URL/messages" \
+              -d @req.json)
+            if [ "$code" != "200" ]; then
+              echo "AI API 返回 $code："; cat resp.json; exit 0
+            fi
+            jq -r '[.content[]? | select(.type == "text") | .text] | join("\n")' resp.json > review.md
+          else
+            # OpenAI 兼容端点：POST /chat/completions
+            jq -n --arg s "$SYSTEM_PROMPT" --rawfile d diff.trunc \
+              '{model: env.AI_MODEL, temperature: 0.2, messages: [
+                {role: "system", content: $s},
+                {role: "user", content: ("请审查以下拉取请求的 diff：\\n\\n" + $d)}]}' > req.json
+            code=$(curl -s -o resp.json -w '%{http_code}' \
+              --retry 2 --max-time 300 \
+              -H "Authorization: Bearer $AI_API_KEY" \
+              -H "Content-Type: application/json" \
+              "$AI_BASE_URL/chat/completions" \
+              -d @req.json)
+            if [ "$code" != "200" ]; then
+              echo "AI API 返回 $code："; cat resp.json; exit 0
+            fi
+            jq -r '.choices[0].message.content' resp.json > review.md
           fi
-          jq -r '.choices[0].message.content' resp.json > review.md
           cat review.md
 
       - name: 发布审查评论
