@@ -41,7 +41,7 @@
 
 **An all-in-one AstrBot plugin** — content fetching, media parsing, device control, and cross-group memory in a single package.
 
-Pixiv random images · Hitokoto quotes · Weather · Femboy images · NetEase Cloud Music song requests · Xiaohongshu/Bilibili/Douyin parsing · DG-LAB device management · Cross-group memory · LLM tools (AI-initiated calls) · Segmented replies
+Pixiv random images · Hitokoto quotes · Weather · Femboy images · NetEase Cloud Music song requests · Xiaohongshu/Bilibili/Douyin/Weibo parsing · DG-LAB device management · Cross-group memory · LLM tools (AI-initiated calls) · Segmented replies
 
 </div>
 
@@ -87,16 +87,16 @@ Pixiv random images · Hitokoto quotes · Weather · Femboy images · NetEase Cl
 | Module | Capabilities |
 | --- | --- |
 | 🎨 **Pixiv Random Images** | Random picks / R18 / tag filtering / keyword search / by-author / aspect-ratio filtering / exclude AI works |
-| 🔍 **Media Parsing** | Xiaohongshu posts & videos · Bilibili video info · Douyin videos without watermark |
-| 📚 **Media Content Parsing** | Link parsing for Xiaohongshu / Bilibili / Douyin |
+| 🔍 **Media Parsing** | Xiaohongshu posts & videos · Bilibili video info · Douyin videos without watermark · Weibo posts & videos |
+| 📚 **Media Content Parsing** | Link parsing for Xiaohongshu / Bilibili / Douyin / Weibo |
 | 🎵 **Song Requests** | Request, search, voice clips, raw files, fetch by ID (NetEase / Kugou) |
 | ✨ **Hitokoto** | 12 categories (anime / manga / games / literature / poetry / film …) |
 | 🌤️ **Weather** | Current conditions + 3-day forecast |
 | 👗 **Femboy Images** | Random femboy-themed images (WebP) |
 | 🔌 **DG-LAB** | Full device lifecycle management over Socket V3/V4 (legacy V2 compatible), protocol auto-detection, multi-user/multi-device isolation, CCDG WebUI control panel |
 | 🖥️ **Master Pages** | All-in-one panel integrated into the AstrBot WebUI: dashboard · help center · visual settings (hot-reload on save) · DG-LAB control (one-click relay server deployment · public-exposure toggle) · contact us |
-| 🧩 **Per-Group Toggle** | Turn every plugin command on/off per group with `/toggle`, without affecting other groups |
-| 🧠 **Cross-Group Memory** | All groups on a platform share one persistent context, automatically injected into LLM requests |
+| 🧩 **Per-Group Toggle** | Turn every plugin command on/off per group with `/toggle` (supports timed disable with auto-recovery), without affecting other groups |
+| 🧠 **Cross-Group Memory** | All groups on a platform share one persistent context, automatically injected into LLM requests (with optional age filtering and keyword-based cleanup) |
 | ✂️ **Segmented Replies** | Split bot replies into multiple messages sent one by one, mimicking human chatting. Three modes: punctuation / length / LLM semantic |
 | 🤖 **LLM Tools** | Register image fetching / song requests / shock control as AI-callable tools (function calling), so the AI can act on natural-language requests on its own |
 
@@ -174,6 +174,7 @@ Every command accepts both Chinese and English aliases:
 | `/xhs` | `/小红书` | Xiaohongshu parsing |
 | `/bilibili` | `/B站` `/b站` | Bilibili video parsing |
 | `/douyin` | `/抖音` | Douyin video parsing |
+| `/weibo` | `/微博` | Weibo post parsing |
 | `/music` | `/音乐` | Song requests (NetEase / Kugou) |
 | `/点歌` | — | Quick song request (voice clip only) |
 | `/音源` | — | Switch song source (auto / NetEase / Kugou) |
@@ -181,7 +182,9 @@ Every command accepts both Chinese and English aliases:
 | `/weather` | `/天气` | Weather lookup |
 | `/femboy` | `/男娘` | Femboy image |
 | `/dglab` | `/电击` | DG-LAB device management |
-| `/开关` | `/toggle` `/switch` | Turn this plugin's commands on/off for a group |
+| `/开关` | `/toggle` `/switch` | Turn this plugin's commands on/off for a group (timed supported) |
+| `/开关列表` | `/switch_list` `/开关状态列表` | List disabled groups on this platform (admin) |
+| `/忘记` | `/forget_memory` `/忘记记忆` | Remove cross-group memory records by keyword (admin) |
 | `/apitest` | `/连通测试` `/接口测试` | API connectivity test |
 
 ---
@@ -258,7 +261,7 @@ Fetches random Pixiv artwork through LeiZ API, with rich filtering and search op
 
 ### 2. Media Content Parsing (`/xhs` `/bilibili` `/douyin`)
 
-Auto-detects the platform behind Xiaohongshu, Bilibili, and Douyin links and returns watermark-free images / video info.
+Auto-detects the platform behind Xiaohongshu, Bilibili, Douyin, and Weibo links and returns watermark-free images / video info.
 
 #### Basic Commands
 
@@ -268,6 +271,7 @@ Auto-detects the platform behind Xiaohongshu, Bilibili, and Douyin links and ret
 | `/xhs <link>` (`/小红书`) | Xiaohongshu parsing |
 | `/bilibili <link>` (`/B站` `/b站`) | Bilibili video parsing |
 | `/douyin <link>` (`/抖音`) | Douyin video parsing |
+| `/weibo <link>` (`/微博`) | Weibo post parsing |
 | `/解析 help` | Show help |
 
 #### Supported Link Formats
@@ -277,6 +281,7 @@ Auto-detects the platform behind Xiaohongshu, Bilibili, and Douyin links and ret
 | Xiaohongshu | `xiaohongshu.com/explore/xxx`, `xhslink.com/xxx` (short link) |
 | Bilibili | `bilibili.com/video/BVxxx`, `b23.tv/xxx` (short link), `avxxx` |
 | Douyin | `douyin.com/video/xxx`, `v.douyin.com/xxx` (short link) |
+| Weibo | `weibo.com/<uid>/xxx`, `m.weibo.cn/detail/xxx`, `weibo.cn/status/xxx`, `t.cn/xxx` (short link) |
 
 #### Examples
 
@@ -285,6 +290,7 @@ Auto-detects the platform behind Xiaohongshu, Bilibili, and Douyin links and ret
 /xhs https://xhslink.com/xxxx
 /bilibili https://www.bilibili.com/video/BV1xx411c7mD
 /douyin https://v.douyin.com/xxxx
+/weibo https://m.weibo.cn/detail/xxxxx
 ```
 
 #### What You Get Back
@@ -292,6 +298,7 @@ Auto-detects the platform behind Xiaohongshu, Bilibili, and Douyin links and ret
 - **Xiaohongshu**: title, author, likes, description, watermark-free full-resolution images, video link (if any)
 - **Bilibili**: title, uploader, duration, views/likes, cover, part (P) info, video download link (if any)
 - **Douyin**: title, author, likes/comments/shares, watermark-free video link
+- **Weibo**: text, author, reposts/comments/likes, images (up to 9), video link (if any)
 
 > ⚠️ Make sure the link is publicly accessible; anti-scraping measures on some platforms may cause parsing to fail. Download links are for personal study only — please respect each platform's terms.
 
@@ -533,28 +540,31 @@ Each group can independently turn this plugin on or off without affecting others
 
 | Command | Description |
 | --- | --- |
-| `/开关 off` | **Disable** all plugin commands in this group (pixiv / parsing / music / … all stop responding) |
-| `/开关 on` | **Re-enable** the plugin's commands in this group |
-| `/开关 status` | Show the current state for this group |
+| `/开关 off` | **Disable permanently** all plugin commands in this group (pixiv / parsing / music / … all stop responding) |
+| `/开关 off <duration>` | **Timed disable** with automatic recovery, e.g. `/开关 off 2h`, `/开关 off 30m`, `/开关 off 1d`, `/开关 off 2小时30分钟` |
+| `/开关 on` | **Re-enable** the plugin's commands in this group (also ends a timed disable early) |
+| `/开关 status` | Show the current state for this group (timed disables show the estimated recovery time) |
+| `/开关列表` (`/switch_list` `/开关状态列表`) | **Admin**: list all disabled groups on this platform with their recovery times |
 | `/开关` | No argument = show status + usage hint |
 
-> Aliases: `/toggle`, `/switch` (e.g. `/toggle off`). The Chinese command `/开关` also accepts `关` (off) / `开` (on) / `状态` (status) as arguments.
+> Aliases: `/toggle`, `/switch` (e.g. `/toggle off 2h`). The Chinese command `/开关` also accepts `关` (off) / `开` (on) / `状态` (status) as arguments. Duration units: `s`/`秒`, `m`/`分`/`分钟`, `h`/`时`/`小时`, `d`/`天` — combinable.
 
 #### Example
 
 ```text
-/开关 off       # turn off all CurrentCortex commands in this group
-/pixiv          # no longer responds (disabled)
-/开关 status    # state: ⛔ disabled
-/开关 on        # re-enable
-/pixiv          # back to normal
+/开关 off       # turn off all CurrentCortex commands in this group permanently
+/开关 off 10h   # turn off for 10 hours (e.g. overnight do-not-disturb; auto-recovers)
+/开关 status    # state: ⛔ disabled (⏳ auto-recovers in 9h58m)
+/开关列表       # admin: list all disabled groups on this platform
+/开关 on        # re-enable (works for permanent and timed disables)
 ```
 
 #### How It Works
 
 - **Persistent state**: stored in `data/currentcortex_group_switch.json` and survives restarts. The default (never configured) is **enabled** — only groups explicitly turned off with `/开关 off` are disabled.
-- **Never deadlocks**: the `/开关` command itself **always works** — even in a disabled group, `/开关 on` re-enables it; it is never intercepted.
-- **Permissions**: by default only **group admins** (as identified by the framework) may operate it, preventing random members from flipping the switch. If you aren't recognized as an admin, disable `group_switch_admin_only` in the config.
+- **Timed auto-recovery**: `/开关 off <duration>` recovers automatically when it expires (lazy expiry check, no background timer needed); the countdown survives restarts.
+- **Never deadlocks**: the `/开关` and `/开关列表` commands themselves **always work** — even in a disabled group, `/开关 on` re-enables it; they are never intercepted.
+- **Permissions**: by default only **group admins** (as identified by the framework) may operate it, preventing random members from flipping the switch. If you aren't recognized as an admin, disable `group_switch_admin_only` in the config. `/开关列表` is always admin-only.
 - **Scoped to this plugin**: the toggle only intercepts CurrentCortex commands; other AstrBot plugins and core bot features are unaffected.
 - **DMs unaffected**: the toggle applies to group chats only.
 
@@ -660,14 +670,16 @@ Optional feature: shares one **persistent** memory across all groups on the same
 
 - **Storage**: `data/currentcortex_cross_group.json`, bucketed per platform instance (`platform_id`), preserved across restarts.
 - **Recording**: non-command group messages are formatted as `[nickname/HH:MM:SS]: text` and appended in a rolling fashion (old records are trimmed past the cap).
-- **Injection**: when a group message triggers an LLM request, the most recent records from the other groups on the same platform are injected into the user-message part as a `<system_reminder>`.
+- **Injection**: when a group message triggers an LLM request, the most recent records from the other groups on the same platform are injected into the user-message part as a `<system_reminder>`; with `cross_group_max_age_hours` set, only records within that window are injected, so cold groups no longer dig up stale topics.
 - **Slash commands never recorded**: command messages don't enter memory.
+- **Keyword cleanup**: admins can send `/忘记 <keyword>` (aliases `/forget_memory` `/忘记记忆`) to delete every record containing that keyword from this platform's memory (substring match, case-insensitive) — precise cleanup of mis-recorded content without wiping the whole platform's memory.
 
 | Option | Default | Description |
 | --- | --- | --- |
 | `cross_group_enable` | false | Enable cross-group memory |
 | `cross_group_max_cnt` | 500 | Maximum records kept per platform |
 | `cross_group_inject_cnt` | 30 | Recent records injected per reply |
+| `cross_group_max_age_hours` | 0 | Only inject records from the last N hours (`0` = no age limit, trim by count only, i.e. the old behavior; 12~48 recommended) |
 
 > ⚠️ Enabling this feeds the chat content of other groups to the LLM — make sure that matches your privacy expectations and that the members of each group are aware and consenting.
 
