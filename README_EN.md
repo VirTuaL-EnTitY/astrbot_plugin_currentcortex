@@ -978,7 +978,7 @@ Acknowledgements:
 
 ---
 
-**Version**: v2.0.9 (per-version changes in [CHANGELOG.md](CHANGELOG.md))  
+**Version**: v2.0.10 (per-version changes in [CHANGELOG.md](CHANGELOG.md))  
 **Repository**: [GitHub](https://github.com/backrooms-yrc/astrbot_plugin_currentcortex)
 
 

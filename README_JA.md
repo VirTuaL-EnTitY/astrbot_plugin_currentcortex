@@ -978,7 +978,7 @@ Issue と PR を歓迎します！バグ報告・機能提案には Issue テン
 
 ---
 
-**バージョン**：v2.0.9（バージョンごとの変更は [CHANGELOG.md](CHANGELOG.md) を参照）  
+**バージョン**：v2.0.10（バージョンごとの変更は [CHANGELOG.md](CHANGELOG.md) を参照）  
 **リポジトリ**：[GitHub](https://github.com/backrooms-yrc/astrbot_plugin_currentcortex)
 
 

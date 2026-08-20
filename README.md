@@ -1,9 +1,34 @@
+<div align="center">
+
+<img src="logo.png" width="200" alt="CurrentCortex 综合插件"/>
+
 # AstrBot CurrentCortex 综合插件
 
-**[简体中文](README.md)** | **[English](README_EN.md)** | **[日本語](README_JA.md)**
+**一个多功能 AstrBot 插件** — 集内容获取、媒体解析、设备控制与跨群记忆于一体。
+
+Pixiv 随机图片 · 每日一言 · 天气查询 · 男娘图片 · 网易云点歌 · 小红书/B站/抖音解析 · DG-LAB 设备管理 · 跨群聊记忆 · LLM 工具（AI 自主调用）· 语义分段回复
+
+[![Release](https://img.shields.io/github/v/release/backrooms-yrc/astrbot_plugin_currentcortex.svg?style=flat-square)](https://github.com/backrooms-yrc/astrbot_plugin_currentcortex/releases)
+[![License](https://img.shields.io/badge/License-MIT-green.svg?style=flat-square)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
+[![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D4.15%20%3C5-5865F2.svg?style=flat-square)](https://github.com/AstrBot)
+[![Stars](https://img.shields.io/github/stars/backrooms-yrc/astrbot_plugin_currentcortex.svg?style=flat-square&label=Stars)](https://github.com/backrooms-yrc/astrbot_plugin_currentcortex/stargazers)
+[![QQ 群](https://img.shields.io/badge/QQ%E7%BE%A4-1106353813-0099FF.svg?style=flat-square&logo=tencentqq&logoColor=white)](https://qun.qq.com/universal-share/share?ac=1&authKey=OmLNlwPdKBlOMNNic9zCRIlfAVn%2BqsvY0rZDEpEYLNsZ6D5UvREADl%2FeNd2nGAUH&busi_data=eyJncm91cENvZGUiOiIxMTA2MzUzODEzIiwidG9rZW4iOiJERWFBR1hSV1djMSswSHI4MEpmQzhmTFlzZTN0Q2VvbFEvZXpQbWZIaHNNSW5Dd2dHcFVKVVJmTTdzWG1OWXBVIiwidWluIjoiMTk0NTgyNjM0NiJ9&data=AFoZ21e7OHbTEKvm7w_zeEuScAfmBnqoa2V6OZFXfaajJ7cTjHQNk3JxtyRUTFE69pnNSWekOVIAA54qMXW97Q&svctype=4&tempid=h5_group_info)
+
+**[💬 加入交流群](https://qun.qq.com/universal-share/share?ac=1&authKey=OmLNlwPdKBlOMNNic9zCRIlfAVn%2BqsvY0rZDEpEYLNsZ6D5UvREADl%2FeNd2nGAUH&busi_data=eyJncm91cENvZGUiOiIxMTA2MzUzODEzIiwidG9rZW4iOiJERWFBR1hSV1djMSswSHI4MEpmQzhmTFlzZTN0Q2VvbFEvZXpQbWZIaHNNSW5Dd2dHcFVKVVJmTTdzWG1OWXBVIiwidWluIjoiMTk0NTgyNjM0NiJ9&data=AFoZ21e7OHbTEKvm7w_zeEuScAfmBnqoa2V6OZFXfaajJ7cTjHQNk3JxtyRUTFE69pnNSWekOVIAA54qMXW97Q&svctype=4&tempid=h5_group_info)** ·
+**[🚀 快速开始](#-快速开始)** ·
+**[⚙️ 配置项](#️-配置项)** ·
+**[📜 更新日志](CHANGELOG.md)** ·
+**[🤝 贡献指南](#-贡献指南)**
+
+🇨🇳 [简体中文](README.md) · 🇬🇧 [English](README_EN.md) · 🇯🇵 [日本語](README_JA.md)
+
+</div>
+
+---
 
 > [!IMPORTANT]
-> ## 🔒 使用本插件前，请务必加入官方 QQ 群
+> **🔒 使用本插件前，请务必加入官方 QQ 群**
 >
 > **所有用户请务必加入官方 QQ 群 1106353813**（[点击加入](https://qun.qq.com/universal-share/share?ac=1&authKey=OmLNlwPdKBlOMNNic9zCRIlfAVn%2BqsvY0rZDEpEYLNsZ6D5UvREADl%2FeNd2nGAUH&busi_data=eyJncm91cENvZGUiOiIxMTA2MzUzODEzIiwidG9rZW4iOiJERWFBR1hSV1djMSswSHI4MEpmQzhmTFlzZTN0Q2VvbFEvZXpQbWZIaHNNSW5Dd2dHcFVKVVJmTTdzWG1OWXBVIiwidWluIjoiMTk0NTgyNjM0NiJ9&data=AFoZ21e7OHbTEKvm7w_zeEuScAfmBnqoa2V6OZFXfaajJ7cTjHQNk3JxtyRUTFE69pnNSWekOVIAA54qMXW97Q&svctype=4&tempid=h5_group_info)）。
 >
@@ -14,7 +39,7 @@
 > 入群后请先阅读群公告。未加群的用户遇到问题时可能无法获得及时支持。
 
 > [!NOTE]
-> ## 📢 紧急招募：DG-LAB 远控功能急缺真机测试志愿者
+> **📢 紧急招募：DG-LAB 远控功能急缺真机测试志愿者**
 >
 > DG-LAB（郊狼）**远控功能目前缺少真机测试，急需志愿者参与实测**——没有真实设备反馈，bug 只能盲修、迭代只能停滞。如果你手头有 **郊狼脉冲主机 3.0**，请务必加入官方群参与测试：
 >
@@ -25,7 +50,7 @@
 > 没有设备的朋友也欢迎进群围观，或帮忙转发扩散 🙏
 
 > [!IMPORTANT]
-> ## 🙏 致歉信——DG-LAB 协议适配迟到的两个多月
+> **🙏 致歉信——DG-LAB 协议适配迟到的两个多月**
 >
 > 各位使用 DG-LAB(郊狼)功能的用户:
 >
@@ -36,14 +61,6 @@
 > 为避免同类问题再次发生,我已订阅上游仓库的变更通知,并为本模块补上了 36 个协议回归测试——今后官方协议再有调整,可以第一时间跟进、不再依赖用户报障。再次感谢 issue #3 的反馈,也感谢大家的包容。
 >
 > —— Rcst20 · 2026年8月15日
-
-<div align="center">
-
-**一个多功能 AstrBot 插件** — 集内容获取、媒体解析、设备控制与跨群记忆于一体。
-
-Pixiv 随机图片 · 每日一言 · 天气查询 · 男娘图片 · 网易云点歌 · 小红书/B站/抖音解析 · DG-LAB 设备管理 · 跨群聊记忆 · LLM 工具（AI 自主调用）· 语义分段回复
-
-</div>
 
 ---
 
@@ -978,5 +995,10 @@ astrbot_plugin_currentcortex/
 
 ---
 
-**版本**：v2.0.9(各版本变更见 [CHANGELOG.md](CHANGELOG.md))  
-**仓库**：[GitHub](https://github.com/backrooms-yrc/astrbot_plugin_currentcortex)
+<div align="center">
+
+**CurrentCortex** · v2.0.10 · [更新日志](CHANGELOG.md) · [问题反馈](https://github.com/backrooms-yrc/astrbot_plugin_currentcortex/issues) · [MIT License](LICENSE)
+
+如果这个插件对你有帮助，欢迎点一个 ⭐ Star 支持作者！
+
+</div>
