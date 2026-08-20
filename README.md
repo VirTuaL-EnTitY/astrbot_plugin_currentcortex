@@ -1,5 +1,7 @@
 # AstrBot CurrentCortex 综合插件
 
+**[简体中文](README.md)** | **[English](README_EN.md)**
+
 > [!IMPORTANT]
 > ## 🔒 使用本插件前，请务必加入官方 QQ 群
 >
@@ -915,7 +917,8 @@ astrbot_plugin_currentcortex/
 ├── CONTRIBUTING.md              # 贡献指南
 ├── _conf_schema.json            # 配置模式定义
 ├── requirements.txt             # Python 依赖
-└── README.md                    # 项目文档
+├── README.md                    # 项目文档（中文）
+└── README_EN.md                 # 项目文档（英文）
 ```
 
 ### 核心模块
@@ -974,5 +977,5 @@ astrbot_plugin_currentcortex/
 
 ---
 
-**版本**：v2.0.0(各版本变更见 [CHANGELOG.md](CHANGELOG.md))  
+**版本**：v2.0.8(各版本变更见 [CHANGELOG.md](CHANGELOG.md))  
 **仓库**：[GitHub](https://github.com/backrooms-yrc/astrbot_plugin_currentcortex)
