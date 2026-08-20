@@ -1,6 +1,6 @@
 # AstrBot CurrentCortex All-in-One Plugin
 
-**[简体中文](README.md)** | **[English](README_EN.md)**
+**[简体中文](README.md)** | **[English](README_EN.md)** | **[日本語](README_JA.md)**
 
 > [!IMPORTANT]
 > ## 🔒 Please Join the Official QQ Group Before Using This Plugin
@@ -918,7 +918,8 @@ astrbot_plugin_currentcortex/
 ├── _conf_schema.json            # Config schema definition
 ├── requirements.txt             # Python dependencies
 ├── README.md                    # Project documentation (Chinese)
-└── README_EN.md                 # Project documentation (English)
+├── README_EN.md                 # Project documentation (English)
+└── README_JA.md                 # Project documentation (Japanese)
 ```
 
 ### Core Modules
@@ -977,7 +978,7 @@ Acknowledgements:
 
 ---
 
-**Version**: v2.0.8 (per-version changes in [CHANGELOG.md](CHANGELOG.md))  
+**Version**: v2.0.9 (per-version changes in [CHANGELOG.md](CHANGELOG.md))  
 **Repository**: [GitHub](https://github.com/backrooms-yrc/astrbot_plugin_currentcortex)
 
 
