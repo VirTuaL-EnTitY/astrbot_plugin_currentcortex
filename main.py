@@ -1501,13 +1501,24 @@ class CurrentCortexPlugin(Star):
             logger.error(f"[GroupSwitch] 守卫处理异常（默认放行）: {e}")
 
     def _is_switch_command(self, message: str) -> bool:
-        """判断消息是否为本插件的开关命令（含中英文与别名、带/不带前缀）。"""
+        """判断消息是否为本插件的开关命令（含中英文与别名、带/不带前缀）。
+
+        开关列表命令必须一并放行：被关闭的群里恰恰最需要查看列表，
+        否则会被守卫静默拦截。
+        """
         if not message:
             return False
         normalized = re.sub(r"^[/!！]\s*", "", message.strip()).strip().lower()
         return any(
             normalized == kw or normalized.startswith(kw + " ")
-            for kw in ("开关", "toggle", "switch")
+            for kw in (
+                "开关",
+                "toggle",
+                "switch",
+                "开关列表",
+                "switch_list",
+                "开关状态列表",
+            )
         )
 
     @filter.command("开关", alias={"toggle", "switch"}, priority=10)
@@ -1567,7 +1578,15 @@ class CurrentCortexPlugin(Star):
             return
 
         if action == "off":
-            duration = self._parse_switch_duration(message_str)
+            try:
+                duration = self._parse_switch_duration(message_str)
+            except ValueError:
+                yield event.plain_result(
+                    "❌ 无法识别的禁用时长\n"
+                    "💡 用法：/开关 off 2h、/开关 off 30m、"
+                    "/开关 off 2小时30分钟；不带时长则为永久关闭"
+                )
+                return
             if not currently_enabled:
                 yield event.plain_result("ℹ️ 本群插件已经是关闭状态")
                 return
@@ -1627,18 +1646,31 @@ class CurrentCortexPlugin(Star):
             yield event.plain_result("❌ 仅管理员可查看开关列表")
             return
 
+        # 只展示当前平台的会话：store 是跨平台全局的，不过滤会把
+        # 其他平台（如 Telegram）的条目也列进来。用 umo 第一段做前缀
+        # 匹配（与 event.unified_msg_origin 同构，避免平台名/实例名不一致）。
+        current_umo = event.unified_msg_origin or ""
+        platform_seg = current_umo.split(":", 1)[0] if current_umo else ""
         details = self._group_switch_store.list_disabled_detail()
+        if platform_seg:
+            details = [
+                d
+                for d in details
+                if d["umo"].split(":", 1)[0] == platform_seg
+            ]
         if not details:
-            yield event.plain_result("✅ 当前没有被关闭插件的群聊")
+            yield event.plain_result("✅ 当前平台没有被关闭插件的群聊")
             return
 
-        lines = [f"🔌 已关闭插件的群聊（共 {len(details)} 个）：", ""]
+        lines = [f"🔌 当前平台已关闭插件的群聊（共 {len(details)} 个）：", ""]
         for item in details:
-            umo = item["umo"]
+            session = item["umo"].rsplit(":", 1)[-1] or item["umo"]
             if item["permanent"]:
-                lines.append(f"  ⛔ {umo}\n     永久禁用")
+                lines.append(f"  ⛔ 群 {session}｜永久禁用（需手动 /开关 on 恢复）")
             else:
-                lines.append(f"  ⛔ {umo}\n     {self._format_switch_until(item['until'])}")
+                lines.append(
+                    f"  ⛔ 群 {session}｜{self._format_switch_until(item['until'])}"
+                )
         yield event.plain_result("\n".join(lines))
 
     def _parse_switch_action(self, message: str) -> str:
@@ -1664,31 +1696,60 @@ class CurrentCortexPlugin(Star):
             return "status"
         return ""
 
-    def _parse_switch_duration(self, message: str) -> Optional[float]:
-        """从开关命令消息中解析可选的禁用时长（秒），仅对 off 动作有意义。
+    # 时长单位 -> 秒（键为小写；中文单位不受 lower() 影响）
+    _DURATION_UNIT_SECONDS = {
+        "s": 1.0, "秒": 1.0,
+        "m": 60.0, "分": 60.0, "分钟": 60.0,
+        "h": 3600.0, "时": 3600.0, "小时": 3600.0,
+        "d": 86400.0, "天": 86400.0,
+    }
+    _DURATION_TOKEN_RE = re.compile(
+        r"(\d+(?:\.\d+)?)\s*(小时|分钟|秒|分|时|天|s|m|h|d)",
+        flags=re.IGNORECASE,
+    )
 
-        支持形如 ``/开关 off 2h``、``/开关 关 30m``、``/开关 off 1d`` 的写法，
-        单位：s/秒、m/分/分钟、h/时/小时、d/天。未提供或格式无法识别时返回 None，
-        代表永久禁用（兼容旧版本 /开关 off 的行为，不影响老用户习惯）。
+    def _parse_switch_duration(self, message: str) -> Optional[float]:
+        """解析 /开关 off 后的时长参数并换算为秒，仅对 off 动作有意义。
+
+        支持单一或复合时长：``2h``、``30m``、``1d``、``2小时30分钟`` 等，
+        单位：s/秒、m/分/分钟、h/时/小时、d/天。
+
+        返回 None 表示未提供时长参数（永久禁用，兼容旧版 /开关 off 行为）。
+        参数存在但无法完整解析（如 ``2x``、``2h30``）或总时长 <= 0 时抛出
+        ValueError，由调用方提示用户——绝不把误写的时长静默当成永久禁用。
         """
-        match = re.search(
-            r"(\d+(?:\.\d+)?)\s*(s|秒|m|分钟|分|h|时|小时|d|天)\b",
+        cleaned = re.sub(
+            r"^[/!！]\s*(开关|toggle|switch)\s*",
+            "",
             message.strip(),
             flags=re.IGNORECASE,
         )
-        if not match:
+        cleaned = re.sub(
+            r"^(开关|toggle|switch)\s*",
+            "",
+            cleaned.strip(),
+            flags=re.IGNORECASE,
+        )
+        tokens = cleaned.strip().split()
+        if not tokens:
             return None
-        value = float(match.group(1))
-        unit = match.group(2).lower()
-        if unit in ("s", "秒"):
-            return value
-        if unit in ("m", "分钟", "分"):
-            return value * 60
-        if unit in ("h", "时", "小时"):
-            return value * 3600
-        if unit in ("d", "天"):
-            return value * 86400
-        return None
+        # 本函数仅在 action == "off" 时被调用，首 token 即动作词
+        arg = "".join(tokens[1:])
+        if not arg:
+            return None
+
+        total = 0.0
+        rest = arg
+        while rest:
+            match = self._DURATION_TOKEN_RE.match(rest)
+            if not match:
+                raise ValueError(f"unrecognized duration: {message!r}")
+            unit = match.group(2).lower()
+            total += float(match.group(1)) * self._DURATION_UNIT_SECONDS[unit]
+            rest = rest[match.end():].lstrip()
+        if total <= 0:
+            raise ValueError(f"non-positive duration: {message!r}")
+        return total
 
     @staticmethod
     def _format_switch_until(until: Optional[float]) -> str:
@@ -1808,7 +1869,9 @@ class CurrentCortexPlugin(Star):
             return
 
         keyword = re.sub(
-            r"^[/!！]\s*(忘记|forget_memory|忘记记忆)\s*",
+            # 备选必须按最长优先排列：否则「忘记」总是先于「忘记记忆」命中，
+            # 导致 /忘记记忆 关键词 提取出「记忆 关键词」。
+            r"^[/!！]\s*(忘记记忆|forget_memory|忘记)\s*",
             "",
             event.message_str.strip(),
             flags=re.IGNORECASE,
