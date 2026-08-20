@@ -21,7 +21,7 @@ Pixiv 随机图片 · 每日一言 · 天气查询 · 男娘图片 · 网易云�
 **[📜 更新日志](CHANGELOG.md)** ·
 **[🤝 贡献指南](#-贡献指南)**
 
-🇨🇳 [简体中文](README.md) · 🇬🇧 [English](README_EN.md) · 🇯🇵 [日本語](README_JA.md)
+🇨🇳 [简体中文](README.md) · 🇬🇧 [English](README_EN.md) · 🇯🇵 [日本語](README_JA.md) · 🇹🇼 [繁體中文](README_ZH-TW.md)
 
 </div>
 
@@ -936,7 +936,8 @@ astrbot_plugin_currentcortex/
 ├── requirements.txt             # Python 依赖
 ├── README.md                    # 项目文档（中文）
 ├── README_EN.md                 # 项目文档（英文）
-└── README_JA.md                 # 项目文档（日文）
+├── README_JA.md                 # 项目文档（日文）
+└── README_ZH-TW.md              # 项目文档（繁体中文）
 ```
 
 ### 核心模块
@@ -997,7 +998,7 @@ astrbot_plugin_currentcortex/
 
 <div align="center">
 
-**CurrentCortex** · v2.0.10 · [更新日志](CHANGELOG.md) · [问题反馈](https://github.com/backrooms-yrc/astrbot_plugin_currentcortex/issues) · [MIT License](LICENSE)
+**CurrentCortex** · v2.0.11 · [更新日志](CHANGELOG.md) · [问题反馈](https://github.com/backrooms-yrc/astrbot_plugin_currentcortex/issues) · [MIT License](LICENSE)
 
 如果这个插件对你有帮助，欢迎点一个 ⭐ Star 支持作者！
 

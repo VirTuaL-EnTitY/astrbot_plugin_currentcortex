@@ -1,6 +1,6 @@
 # AstrBot CurrentCortex 統合プラグイン
 
-**[简体中文](README.md)** | **[English](README_EN.md)** | **[日本語](README_JA.md)**
+**[简体中文](README.md)** | **[English](README_EN.md)** | **[日本語](README_JA.md)** | **[繁體中文](README_ZH-TW.md)**
 
 > [!IMPORTANT]
 > ## 🔒 ご利用の前に、必ず公式 QQ グループへご参加ください
@@ -919,7 +919,8 @@ astrbot_plugin_currentcortex/
 ├── requirements.txt             # Python 依存関係
 ├── README.md                    # プロジェクトドキュメント（中国語）
 ├── README_EN.md                 # プロジェクトドキュメント（英語）
-└── README_JA.md                 # プロジェクトドキュメント（日本語）
+├── README_JA.md                 # プロジェクトドキュメント（日本語）
+└── README_ZH-TW.md              # プロジェクトドキュメント（繁体字中国語）
 ```
 
 ### コアモジュール
@@ -978,7 +979,7 @@ Issue と PR を歓迎します！バグ報告・機能提案には Issue テン
 
 ---
 
-**バージョン**：v2.0.10（バージョンごとの変更は [CHANGELOG.md](CHANGELOG.md) を参照）  
+**バージョン**：v2.0.11（バージョンごとの変更は [CHANGELOG.md](CHANGELOG.md) を参照）  
 **リポジトリ**：[GitHub](https://github.com/backrooms-yrc/astrbot_plugin_currentcortex)
 
 
