@@ -105,6 +105,11 @@
     "type": "int",
     "default": 30
   },
+  "cross_group_max_age_hours": {
+    "description": "跨群聊记忆：注入 LLM 时只保留最近多少小时内的记录（0 表示不限时效，仅按条数裁剪，即旧版行为；建议 12~48）",
+    "type": "int",
+    "default": 0
+  },
   "group_switch_enable": {
     "description": "启用「按群聊独立开关插件」功能。开启后，可用 /开关 命令在单个群聊中关闭/开启本插件全部命令",
     "type": "bool",

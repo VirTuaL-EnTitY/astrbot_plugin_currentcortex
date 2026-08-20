@@ -40,6 +40,14 @@ class URLExtractor:
         re.compile(r"https?://(?:www\.)?iesdouyin\.com/share/video/(\d+)"),
     ]
 
+    # 微博链接模式（含普通网页版微博正文、m 站移动版、短链）
+    WEIBO_PATTERNS = [
+        re.compile(r"https?://(?:www\.)?weibo\.com/\d+/([a-zA-Z0-9]+)"),
+        re.compile(r"https?://m\.weibo\.cn/(?:detail|status)/([a-zA-Z0-9]+)"),
+        re.compile(r"https?://weibo\.cn/status/([a-zA-Z0-9]+)"),
+        re.compile(r"https?://t\.cn/([a-zA-Z0-9]+)"),
+    ]
+
     @classmethod
     def extract_xiaohongshu(cls, text: str) -> Optional[str]:
         """提取小红书笔记ID"""
@@ -72,6 +80,15 @@ class URLExtractor:
         return None
 
     @classmethod
+    def extract_weibo(cls, text: str) -> Optional[str]:
+        """提取微博帖子ID（mid，或 t.cn 短链的短码，短链需再跳转解析）"""
+        for pattern in cls.WEIBO_PATTERNS:
+            match = pattern.search(text)
+            if match:
+                return match.group(1)
+        return None
+
+    @classmethod
     def detect_platform(cls, text: str) -> Optional[str]:
         """检测链接所属平台"""
         if cls.extract_xiaohongshu(text):
@@ -80,6 +97,8 @@ class URLExtractor:
             return "bilibili"
         if cls.extract_douyin(text):
             return "douyin"
+        if cls.extract_weibo(text):
+            return "weibo"
         return None
 
 
@@ -615,6 +634,128 @@ class DouyinParser(BaseMediaParser):
         return result
 
 
+class WeiboParser(BaseMediaParser):
+    """微博内容解析器"""
+
+    def __init__(self, timeout: int = 20):
+        super().__init__(timeout)
+        self._headers["Referer"] = "https://m.weibo.cn/"
+
+    async def parse(self, url_or_text: str) -> Dict[str, Any]:
+        """解析微博链接"""
+        mid = URLExtractor.extract_weibo(url_or_text)
+        if not mid:
+            raise MediaParserError("未能从微博链接中提取到帖子ID，请检查链接格式")
+
+        # t.cn 短链需要先跳转拿到真实 mid
+        if "t.cn/" in url_or_text:
+            mid = await self._resolve_short_link(url_or_text)
+
+        return await self._fetch_post_detail(mid, url_or_text)
+
+    async def _resolve_short_link(self, short_url: str) -> str:
+        """解析微博 t.cn 短链，返回最终 URL 中的帖子 ID"""
+        async with aiohttp.ClientSession(
+            timeout=self._timeout, headers=self._headers
+        ) as session:
+            try:
+                async with session.get(
+                    short_url, allow_redirects=True, ssl=False
+                ) as resp:
+                    final_url = str(resp.url)
+                    mid = URLExtractor.extract_weibo(final_url)
+                    if mid:
+                        return mid
+            except Exception as e:
+                logger.error(f"[Weibo] 短链接解析失败: {e}")
+        raise MediaParserError("微博短链接解析失败，请使用完整链接")
+
+    async def _fetch_post_detail(self, mid: str, original_url: str) -> Dict[str, Any]:
+        """通过移动版接口获取微博详情，失败时回退到网页 og 标签解析"""
+        api_url = f"https://m.weibo.cn/statuses/show?id={mid}"
+        try:
+            data = await self._fetch_json(api_url)
+            payload = data.get("data") if isinstance(data, dict) else None
+            if payload:
+                return self._parse_status_payload(payload, mid, original_url)
+        except MediaParserError as e:
+            logger.error(f"[Weibo] API 获取失败，尝试网页兜底: {e}")
+
+        try:
+            html = await self._fetch_text(f"https://m.weibo.cn/detail/{mid}")
+            return self._parse_html_fallback(html, mid, original_url)
+        except MediaParserError as e:
+            logger.error(f"[Weibo] 网页兜底也失败: {e}")
+
+        return {
+            "mid": mid,
+            "title": "",
+            "text": "",
+            "author": "",
+            "images": [],
+            "url": original_url,
+        }
+
+    @staticmethod
+    def _strip_html_tags(text: str) -> str:
+        return re.sub(r"<[^>]+>", "", text or "").strip()
+
+    def _parse_status_payload(
+        self, payload: Dict[str, Any], mid: str, original_url: str
+    ) -> Dict[str, Any]:
+        """解析 m.weibo.cn statuses/show 接口返回的 JSON 结构"""
+        user = payload.get("user", {}) if isinstance(payload.get("user"), dict) else {}
+        pics = payload.get("pics", [])
+        images = []
+        if isinstance(pics, list):
+            for pic in pics:
+                pic_url = pic.get("large", {}).get("url") if isinstance(pic, dict) else None
+                if pic_url:
+                    images.append(pic_url)
+
+        page_info = payload.get("page_info", {})
+        video_url = ""
+        if isinstance(page_info, dict) and page_info.get("type") == "video":
+            media_info = page_info.get("media_info", {})
+            video_url = media_info.get("stream_url_hd") or media_info.get("stream_url", "")
+
+        return {
+            "mid": mid,
+            "text": self._strip_html_tags(payload.get("text", "")),
+            "author": user.get("screen_name", ""),
+            "reposts": str(payload.get("reposts_count", "")),
+            "comments": str(payload.get("comments_count", "")),
+            "likes": str(payload.get("attitudes_count", "")),
+            "images": images,
+            "video_url": video_url,
+            "url": original_url or f"https://m.weibo.cn/detail/{mid}",
+        }
+
+    def _parse_html_fallback(
+        self, html: str, mid: str, original_url: str
+    ) -> Dict[str, Any]:
+        """从网页 og 标签中兜底提取基础信息"""
+        result = {
+            "mid": mid,
+            "text": "",
+            "author": "",
+            "images": [],
+            "video_url": "",
+            "url": original_url or f"https://m.weibo.cn/detail/{mid}",
+        }
+        og_title = re.search(
+            r'<meta[^>]+property="og:title"[^>]+content="([^"]+)"', html
+        )
+        og_image = re.search(
+            r'<meta[^>]+property="og:image"[^>]+content="([^"]+)"', html
+        )
+        if og_title:
+            result["text"] = og_title.group(1)
+        if og_image:
+            result["images"] = [og_image.group(1)]
+        return result
+
+
 class MediaParserManager:
     """媒体解析管理器"""
 
@@ -622,6 +763,7 @@ class MediaParserManager:
         self.xiaohongshu = XiaoHongShuParser(timeout)
         self.bilibili = BilibiliParser(timeout)
         self.douyin = DouyinParser(timeout)
+        self.weibo = WeiboParser(timeout)
 
     async def parse(self, url_or_text: str) -> Dict[str, Any]:
         """自动识别平台并解析"""
@@ -639,7 +781,9 @@ class MediaParserManager:
             }
         elif platform == "douyin":
             return {"platform": "douyin", "data": await self.douyin.parse(url_or_text)}
+        elif platform == "weibo":
+            return {"platform": "weibo", "data": await self.weibo.parse(url_or_text)}
         else:
             raise MediaParserError(
-                "未能识别链接所属平台，请检查链接格式是否支持（小红书/B站/抖音）"
+                "未能识别链接所属平台，请检查链接格式是否支持（小红书/B站/抖音/微博）"
             )
