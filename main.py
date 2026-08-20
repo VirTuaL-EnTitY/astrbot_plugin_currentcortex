@@ -376,12 +376,14 @@ MEDIA_PARSER_HELP_TEXT = """🔍 媒体内容解析 使用说明
   • 小红书（xiaohongshu）— 笔记图文/视频解析
   • Bilibili（bilibili）— 视频信息及下载链接解析
   • 抖音（douyin）— 短视频解析
+  • 微博（weibo）— 帖子图文/视频解析
 
 📌 基本命令
   /解析 <链接>           自动识别平台并解析内容（别名：/解析）
   /xhs <链接>           解析小红书内容（别名：/小红书）
   /bilibili <链接>      解析B站视频（别名：/B站）
   /douyin <链接>        解析抖音视频（别名：/抖音）
+  /weibo <链接>         解析微博帖子（别名：/微博）
   /解析 help            显示此帮助信息
 
 📌 支持的链接格式
@@ -398,11 +400,17 @@ MEDIA_PARSER_HELP_TEXT = """🔍 媒体内容解析 使用说明
     • https://www.douyin.com/video/xxx
     • https://v.douyin.com/xxx（短链接）
 
+  微博：
+    • https://weibo.com/1234567890/xxxxx
+    • https://m.weibo.cn/detail/xxxxx
+    • https://t.cn/xxxx（短链接）
+
 📌 使用示例
   /解析 https://www.xiaohongshu.com/explore/abc123
   /xhs https://xhslink.com/xxxx
   /bilibili https://www.bilibili.com/video/BV1xx411c7mD
   /douyin https://v.douyin.com/xxxx
+  /weibo https://m.weibo.cn/detail/xxxxx
 
 📌 返回信息
   小红书：
@@ -419,6 +427,11 @@ MEDIA_PARSER_HELP_TEXT = """🔍 媒体内容解析 使用说明
     • 视频标题、作者
     • 点赞、评论、分享数
     • 无水印视频链接
+
+  微博：
+    • 正文、作者
+    • 转发、评论、点赞数
+    • 配图列表 / 视频链接（如有）
 
 ⚠️ 注意事项
   • 请确保链接可公开访问
@@ -1337,13 +1350,18 @@ class CurrentCortexPlugin(Star):
         self._cross_group_inject_cnt = max(
             0, int(config.get("cross_group_inject_cnt", 30))
         )
+        # 0 表示不限时效（沿用旧行为：只按条数裁剪，不管新旧）
+        self._cross_group_max_age_hours = max(
+            0.0, float(config.get("cross_group_max_age_hours", 0))
+        )
         self._cross_group_store: "CrossGroupMemoryStore | None" = None
         if self._cross_group_enable:
             try:
                 self._cross_group_store = CrossGroupMemoryStore(data_dir="data")
                 logger.info(
                     f"[CrossGroupMemory] 已启用跨群聊记忆 "
-                    f"(max_cnt={self._cross_group_max_cnt}, inject_cnt={self._cross_group_inject_cnt})"
+                    f"(max_cnt={self._cross_group_max_cnt}, inject_cnt={self._cross_group_inject_cnt}, "
+                    f"max_age_hours={self._cross_group_max_age_hours or '不限'})"
                 )
             except Exception as e:
                 logger.warning(f"[CrossGroupMemory] 初始化失败，已禁用: {e}")
@@ -1532,23 +1550,40 @@ class CurrentCortexPlugin(Star):
 
         if action == "status":
             state = "✅ 已启用" if currently_enabled else "⛔ 已关闭"
+            extra = ""
+            if not currently_enabled:
+                until = self._group_switch_store.get_until(umo)
+                extra = (
+                    "\n" + self._format_switch_until(until)
+                    if until is not None
+                    else "\n⏳ 永久禁用（需手动 /开关 on 恢复）"
+                )
             yield event.plain_result(
-                f"🔌 本群插件状态\n{state}\n\n"
+                f"🔌 本群插件状态\n{state}{extra}\n\n"
                 "💡 用法：\n"
-                "  /开关 off  关闭本群全部插件命令\n"
+                "  /开关 off [时长]  关闭本群全部插件命令（可选时长如 2h/30m/1d）\n"
                 "  /开关 on   重新启用"
             )
             return
 
         if action == "off":
+            duration = self._parse_switch_duration(message_str)
             if not currently_enabled:
                 yield event.plain_result("ℹ️ 本群插件已经是关闭状态")
                 return
-            self._group_switch_store.set_disabled(umo)
-            logger.info(f"[GroupSwitch] 用户 {user_name} 关闭了会话 {umo} 的插件")
+            self._group_switch_store.set_disabled(umo, duration_seconds=duration)
+            logger.info(
+                f"[GroupSwitch] 用户 {user_name} 关闭了会话 {umo} 的插件"
+                + (f"（{duration:.0f}秒后自动恢复）" if duration else "（永久）")
+            )
+            recover_hint = (
+                self._format_switch_until(time.time() + duration)
+                if duration
+                else "💡 重新启用：发送 /开关 on"
+            )
             yield event.plain_result(
                 "⛔ 已在本群关闭 CurrentCortex 插件全部命令\n\n"
-                "💡 重新启用：发送 /开关 on\n"
+                f"{recover_hint}\n"
                 "（开关命令始终可用，不会被拦截）"
             )
             return
@@ -1569,10 +1604,42 @@ class CurrentCortexPlugin(Star):
         yield event.plain_result(
             f"🔌 本群插件状态：{state}\n\n"
             "💡 用法：\n"
-            "  /开关 off（或 关）  关闭本群全部插件命令\n"
+            "  /开关 off（或 关）[时长]  关闭本群全部插件命令，可选时长如 2h/30m/1d\n"
             "  /开关 on（或 开）   重新启用\n"
             "  /开关 status（或 状态）  查看当前状态"
         )
+
+    @filter.command("开关列表", alias={"switch_list", "开关状态列表"})
+    async def group_switch_list_command(self, event: AstrMessageEvent):
+        """查看当前平台下所有被关闭插件的群聊（可视化管理，仅管理员可用）。
+
+        以文本表格形式列出各被禁用会话及其恢复时间，方便管理员一眼确认插件在
+        哪些群处于关闭状态，无需逐个群发送 /开关 status 查询。
+        """
+        if not self._group_switch_enable or self._group_switch_store is None:
+            yield event.plain_result(
+                "❌ 按群聊开关功能未启用\n"
+                "💡 请在插件配置中开启 group_switch_enable 后重启插件"
+            )
+            return
+
+        if self._group_switch_admin_only and not event.is_admin():
+            yield event.plain_result("❌ 仅管理员可查看开关列表")
+            return
+
+        details = self._group_switch_store.list_disabled_detail()
+        if not details:
+            yield event.plain_result("✅ 当前没有被关闭插件的群聊")
+            return
+
+        lines = [f"🔌 已关闭插件的群聊（共 {len(details)} 个）：", ""]
+        for item in details:
+            umo = item["umo"]
+            if item["permanent"]:
+                lines.append(f"  ⛔ {umo}\n     永久禁用")
+            else:
+                lines.append(f"  ⛔ {umo}\n     {self._format_switch_until(item['until'])}")
+        yield event.plain_result("\n".join(lines))
 
     def _parse_switch_action(self, message: str) -> str:
         """从开关命令消息中解析动作：on / off / status / （空）。"""
@@ -1588,7 +1655,7 @@ class CurrentCortexPlugin(Star):
             cleaned.strip(),
             flags=re.IGNORECASE,
         )
-        token = cleaned.strip().lower()
+        token = cleaned.strip().split()[0].lower() if cleaned.strip() else ""
         if token in ("on", "开", "enable", "启用"):
             return "on"
         if token in ("off", "关", "disable", "关闭", "禁用"):
@@ -1596,6 +1663,51 @@ class CurrentCortexPlugin(Star):
         if token in ("status", "状态", "查看", "query"):
             return "status"
         return ""
+
+    def _parse_switch_duration(self, message: str) -> Optional[float]:
+        """从开关命令消息中解析可选的禁用时长（秒），仅对 off 动作有意义。
+
+        支持形如 ``/开关 off 2h``、``/开关 关 30m``、``/开关 off 1d`` 的写法，
+        单位：s/秒、m/分/分钟、h/时/小时、d/天。未提供或格式无法识别时返回 None，
+        代表永久禁用（兼容旧版本 /开关 off 的行为，不影响老用户习惯）。
+        """
+        match = re.search(
+            r"(\d+(?:\.\d+)?)\s*(s|秒|m|分钟|分|h|时|小时|d|天)\b",
+            message.strip(),
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return None
+        value = float(match.group(1))
+        unit = match.group(2).lower()
+        if unit in ("s", "秒"):
+            return value
+        if unit in ("m", "分钟", "分"):
+            return value * 60
+        if unit in ("h", "时", "小时"):
+            return value * 3600
+        if unit in ("d", "天"):
+            return value * 86400
+        return None
+
+    @staticmethod
+    def _format_switch_until(until: Optional[float]) -> str:
+        """将到期时间戳格式化为提示行；until 为 None 时给出永久禁用提示。"""
+        if until is None:
+            return "⏳ 永久禁用（需手动 /开关 on 恢复）"
+        import datetime as _dt
+
+        remain = max(0, until - time.time())
+        mins, secs = divmod(int(remain), 60)
+        hours, mins = divmod(mins, 60)
+        if hours:
+            remain_str = f"{hours}小时{mins}分钟后"
+        elif mins:
+            remain_str = f"{mins}分钟后"
+        else:
+            remain_str = f"{secs}秒后"
+        until_str = _dt.datetime.fromtimestamp(until).strftime("%m-%d %H:%M")
+        return f"⏳ 将于 {remain_str}（{until_str}）自动恢复"
 
     def _format_cross_group_record(self, event: AstrMessageEvent) -> str:
         """Format a group message into a single record line for cross-group memory.
@@ -1652,8 +1764,15 @@ class CurrentCortexPlugin(Star):
             platform_id = event.get_platform_id()
             if not platform_id:
                 return
+            max_age_seconds = (
+                self._cross_group_max_age_hours * 3600
+                if self._cross_group_max_age_hours > 0
+                else None
+            )
             shared = self._cross_group_store.get_recent(
-                platform_id, self._cross_group_inject_cnt
+                platform_id,
+                self._cross_group_inject_cnt,
+                max_age_seconds=max_age_seconds,
             )
             if not shared:
                 return
@@ -1668,6 +1787,50 @@ class CurrentCortexPlugin(Star):
             req.extra_user_content_parts.append(TextPart(text=block))
         except Exception as e:
             logger.error(f"[CrossGroupMemory] 注入上下文失败: {e}")
+
+    @filter.command("忘记", alias={"forget_memory", "忘记记忆"})
+    async def cross_group_forget_command(self, event: AstrMessageEvent):
+        """从跨群聊共享记忆中删除包含指定关键词的记录（仅管理员可用）。
+
+        用法：/忘记 <关键词>
+        会删除本平台跨群记忆中所有包含该关键词的记录行（子串匹配，不区分大小写），
+        用于清理误记录的内容，而不必用 /clear 之类的操作清空整个平台的记忆。
+        """
+        if not self._cross_group_enable or self._cross_group_store is None:
+            yield event.plain_result(
+                "❌ 跨群聊记忆功能未启用\n"
+                "💡 请在插件配置中开启 cross_group_enable 后重启插件"
+            )
+            return
+
+        if not event.is_admin():
+            yield event.plain_result("❌ 仅管理员可清理跨群聊记忆")
+            return
+
+        keyword = re.sub(
+            r"^[/!！]\s*(忘记|forget_memory|忘记记忆)\s*",
+            "",
+            event.message_str.strip(),
+            flags=re.IGNORECASE,
+        ).strip()
+        if not keyword:
+            yield event.plain_result("💡 用法：/忘记 <关键词>\n将删除跨群记忆中包含该关键词的所有记录")
+            return
+
+        platform_id = event.get_platform_id()
+        if not platform_id:
+            yield event.plain_result("❌ 无法获取当前平台标识，操作已取消")
+            return
+
+        removed = self._cross_group_store.forget_keyword(platform_id, keyword)
+        if removed:
+            logger.info(
+                f"[CrossGroupMemory] 用户 {event.get_sender_name()} "
+                f"删除了 {removed} 条包含关键词「{keyword}」的记录"
+            )
+            yield event.plain_result(f"✅ 已删除 {removed} 条包含「{keyword}」的记忆记录")
+        else:
+            yield event.plain_result(f"ℹ️ 未找到包含「{keyword}」的记忆记录")
 
     # =================================================================== #
     # 插件宣传（QQ 群）：/交流群 查询命令 + 帮助/错误提示末尾群号 +
@@ -4174,15 +4337,33 @@ class CurrentCortexPlugin(Star):
         except Exception as e:
             yield event.plain_result(f"抖音解析失败: {str(e)}")
 
+    @filter.command("weibo", alias={"微博"})
+    async def weibo_parse_command(self, event: AstrMessageEvent):
+        """解析微博链接中的媒体内容。"""
+        message_str = event.message_str.strip()
+        if self._is_help_command(message_str):
+            yield event.plain_result("微博解析: /weibo <链接>")
+            return
+        url = self._parse_media_url(message_str)
+        if not url or not URLExtractor.extract_weibo(url):
+            yield event.plain_result("请提供有效的微博链接")
+            return
+        try:
+            data = await self._media_parser.weibo.parse(url)
+            for item in self._format_weibo_response(data, event):
+                yield item
+        except Exception as e:
+            yield event.plain_result(f"微博解析失败: {str(e)}")
+
     def _parse_media_url(self, message: str) -> Optional[str]:
         cleaned = re.sub(
-            r"^[/!！]\s*(解析|xhs|小红书|bilibili|B站|b站|douyin|抖音)\s*",
+            r"^[/!！]\s*(解析|xhs|小红书|bilibili|B站|b站|douyin|抖音|weibo|微博)\s*",
             "",
             message.strip(),
             flags=re.IGNORECASE,
         )
         cleaned = re.sub(
-            r"^(解析|xhs|小红书|bilibili|B站|b站|douyin|抖音)\s*",
+            r"^(解析|xhs|小红书|bilibili|B站|b站|douyin|抖音|weibo|微博)\s*",
             "",
             cleaned.strip(),
             flags=re.IGNORECASE,
@@ -4198,6 +4379,7 @@ class CurrentCortexPlugin(Star):
             cleaned.startswith("xhslink.com/")
             or cleaned.startswith("b23.tv/")
             or cleaned.startswith("v.douyin.com/")
+            or cleaned.startswith("t.cn/")
         ):
             return f"https://{cleaned}"
         return None
@@ -4211,6 +4393,8 @@ class CurrentCortexPlugin(Star):
             return self._format_bilibili_response(data, event)
         elif platform == "douyin":
             return self._format_douyin_response(data, event)
+        elif platform == "weibo":
+            return self._format_weibo_response(data, event)
         return [event.plain_result("未知平台")]
 
     def _format_xiaohongshu_response(
@@ -4322,6 +4506,42 @@ class CurrentCortexPlugin(Star):
         results = [event.plain_result("\n".join(parts))]
         if cover:
             results.append(event.image_result(cover))
+        return results
+
+    def _format_weibo_response(
+        self, data: Dict[str, Any], event: AstrMessageEvent
+    ) -> List[Any]:
+        text = data.get("text", "")
+        author = data.get("author", "")
+        reposts = data.get("reposts", "")
+        comments = data.get("comments", "")
+        likes = data.get("likes", "")
+        images = data.get("images", [])
+        video_url = data.get("video_url", "")
+        url = data.get("url", "")
+        parts = ["📰 微博解析"]
+        if author:
+            parts.append(f"👤 作者：{author}")
+        stat_parts = []
+        if likes:
+            stat_parts.append(f"❤️ {likes}")
+        if comments:
+            stat_parts.append(f"💬 {comments}")
+        if reposts:
+            stat_parts.append(f"🔄 {reposts}")
+        if stat_parts:
+            parts.append(" ".join(stat_parts))
+        if text:
+            parts.append(f"📄 正文：{text[:200]}")
+        if url:
+            parts.append(f"🔗 链接：{url}")
+        if video_url:
+            parts.append(f"📥 视频：{video_url}")
+        results = [event.plain_result("\n".join(parts))]
+        if images:
+            for img_url in images[:9]:
+                if img_url:
+                    results.append(event.image_result(img_url))
         return results
 
     @staticmethod
