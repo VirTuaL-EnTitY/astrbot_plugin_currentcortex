@@ -1,0 +1,69 @@
+# 测试机器人：PR / 推送时自动运行仓库自带测试，失败时在 PR 上留言
+name: 测试机器人
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: pip
+
+      - name: 安装依赖
+        run: pip install -r requirements.txt
+
+      - name: 运行测试
+        id: pytest
+        run: |
+          set +e
+          : > /tmp/pytest.log
+          overall=0
+          for f in test_*.py; do
+            echo "=== $f ===" >> /tmp/pytest.log
+            python3 "$f" >> /tmp/pytest.log 2>&1
+            code=$?
+            echo "--- exit $code ---" >> /tmp/pytest.log
+            [ $code -ne 0 ] && overall=1
+          done
+          tail -40 /tmp/pytest.log
+          echo "exit_code=$overall" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: 失败时在 PR 上留言
+        if: github.event_name == 'pull_request' && steps.pytest.outputs.exit_code != '0'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const log = fs.readFileSync('/tmp/pytest.log', 'utf8');
+            const tail = log.split('\n').slice(-25).join('\n');
+            const body = [
+              '## ❌ 测试未通过',
+              '',
+              '测试机器人自动运行了仓库测试，结果如下（末尾日志）：',
+              '',
+              '```',
+              tail,
+              '```',
+              '',
+              '请根据日志修复后重新推送，机器人会自动重跑。'
+            ].join('\n');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: body
+            });
+            core.setFailed('pytest failed');

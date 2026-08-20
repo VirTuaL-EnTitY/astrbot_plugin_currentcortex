@@ -1,0 +1,36 @@
+# AI 审查机器人（第一阶段）：收集 PR diff 并上传为工件。
+# 使用普通 pull_request 触发（fork PR 也可运行），不接触任何密钥。
+name: AI 审查机器人（收集差异）
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  upload-diff:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 导出 PR diff
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: diff } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+              mediaType: { format: 'diff' }
+            });
+            const fs = require('fs');
+            fs.writeFileSync(`${process.env.RUNNER_TEMP}/pr.diff`, Buffer.from(diff));
+            core.info(`diff size: ${Buffer.from(diff).length} bytes`);
+
+      - name: 上传 diff 工件
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-diff-${{ github.event.pull_request.number }}
+          path: ${{ runner.temp }}/pr.diff
+          retention-days: 1
+          if-no-files-found: error

@@ -1,0 +1,100 @@
+# AI 审查机器人（第二阶段）：下载 diff 工件，调用 OpenAI 兼容 API 生成中文审查评论。
+# 通过 workflow_run 在基础仓库上下文运行，可安全使用密钥（fork PR 同样生效）。
+#
+# 需要配置（Settings → Secrets and variables → Actions）：
+#   Secret  AI_API_KEY   必填，API 密钥
+#   Variable AI_BASE_URL 可选，默认 https://api.openai.com/v1
+#                        例：DeepSeek https://api.deepseek.com/v1
+#                            智谱 GLM https://open.bigmodel.cn/api/paas/v4
+#   Variable AI_MODEL    可选，默认 gpt-4o-mini
+name: AI 审查机器人
+
+on:
+  workflow_run:
+    workflows: ['AI 审查机器人（收集差异）']
+    types: [completed]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success'
+    steps:
+      - name: 解析 PR 编号
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            let pr = context.payload.workflow_run.pull_requests[0]?.number;
+            if (!pr) {
+              const { data } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                commit_sha: context.payload.workflow_run.head_sha
+              });
+              pr = data[0]?.number;
+            }
+            if (pr) core.setOutput('number', pr);
+            else core.info('未找到关联 PR，跳过');
+
+      - name: 下载 diff 工件
+        if: steps.pr.outputs.number
+        uses: actions/download-artifact@v4
+        with:
+          name: pr-diff-${{ steps.pr.outputs.number }}
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 调用 AI 审查
+        if: steps.pr.outputs.number
+        env:
+          AI_API_KEY: ${{ secrets.AI_API_KEY }}
+          AI_BASE_URL: ${{ vars.AI_BASE_URL || 'https://api.openai.com/v1' }}
+          AI_MODEL: ${{ vars.AI_MODEL || 'gpt-4o-mini' }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        run: |
+          if [ -z "$AI_API_KEY" ]; then
+            echo "AI_API_KEY 未配置，跳过 AI 审查（请在仓库 Secrets 中添加后自动生效）"
+            exit 0
+          fi
+          # 过大的 diff 截断，避免超出上下文
+          head -c 60000 pr.diff > diff.trunc || true
+          jq -n --rawfile d diff.trunc '{model: env.AI_MODEL, messages: [
+            {role: "system", content: "你是代码审查助手。请审查给出的 git diff，用中文回复，格式为：## 🤖 AI 代码审查\\n### 改动概述\\n### 潜在风险\\n### 建议\\n内容简洁，只提真实问题，没有风险就明确说没有。"},
+            {role: "user", content: ("请审查以下拉取请求的 diff：\\n\\n" + $d)}
+          ], temperature: 0.2}' > req.json
+          code=$(curl -s -o resp.json -w '%{http_code}' \
+            --retry 2 --max-time 300 \
+            -H "Authorization: Bearer $AI_API_KEY" \
+            -H "Content-Type: application/json" \
+            "$AI_BASE_URL/chat/completions" \
+            -d @req.json)
+          if [ "$code" != "200" ]; then
+            echo "AI API 返回 $code："; cat resp.json; exit 0
+          fi
+          jq -r '.choices[0].message.content' resp.json > review.md
+          cat review.md
+
+      - name: 发布审查评论
+        if: steps.pr.outputs.number
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        with:
+          script: |
+            const fs = require('fs');
+            if (!fs.existsSync('review.md')) return;
+            let review = fs.readFileSync('review.md', 'utf8').trim();
+            if (!review) return;
+            if (!review.includes('AI 代码审查')) {
+              review = '## 🤖 AI 代码审查\n' + review;
+            }
+            const body = review + '\n\n---\n*以上内容由 AI 自动生成，仅供参考，最终以人工审查为准。*';
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: Number(process.env.PR_NUMBER),
+              body: body
+            });
