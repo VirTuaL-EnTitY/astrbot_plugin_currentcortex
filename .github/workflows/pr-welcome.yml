@@ -1,8 +1,13 @@
 # PR 欢迎机器人：新 PR 打开时自动回复欢迎语 + 改动统计
 name: PR 欢迎机器人
 
+# 注意：必须用 pull_request_target 而非 pull_request——fork PR 触发的
+# pull_request 事件拿到的是只读 GITHUB_TOKEN，createComment 会 403，
+# 导致欢迎机器人在所有 fork PR 上失败（PR #9 实测）。
+# pull_request_target 在基础仓库上下文运行、令牌可写；本工作流只读
+# PR 元数据发评论，不 checkout PR 代码、不使用任何 Secret，无注入风险。
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, reopened]
 
 permissions:

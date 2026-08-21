@@ -29,7 +29,22 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
+            // 按优先级解析 PR 编号：载荷 → 触发 run 的工件名 → commit 关联（兜底）。
+            // fork PR 的载荷 pull_requests 为空、commit 关联查询也常返回空
+            // （GitHub 已知限制），而收集器由 pull_request 事件触发、天然知道
+            // 编号并写进了工件名 pr-diff-<N>，因此工件名是 fork PR 的可靠来源。
             let pr = context.payload.workflow_run.pull_requests[0]?.number;
+            if (!pr) {
+              const { data: arts } = await github.rest.actions.listWorkflowRunArtifacts({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: context.payload.workflow_run.id,
+              });
+              for (const a of arts.artifacts) {
+                const m = a.name.match(/^pr-diff-(\d+)$/);
+                if (m) { pr = Number(m[1]); break; }
+              }
+            }
             if (!pr) {
               const { data } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
                 owner: context.repo.owner,
@@ -38,8 +53,16 @@ jobs:
               });
               pr = data[0]?.number;
             }
-            if (pr) core.setOutput('number', pr);
-            else core.info('未找到关联 PR，跳过');
+            if (pr) {
+              core.info(`已解析 PR #${pr}`);
+              core.setOutput('number', pr);
+            } else {
+              // 解析失败必须让 run 变红：此前静默跳过导致 fork PR 长期无审查且无任何告警
+              core.setFailed(
+                '未能解析 PR 编号（载荷 pull_requests 为空、工件名无 pr-diff-N、' +
+                'commit 关联查询也为空），请人工核查'
+              );
+            }
 
       - name: 下载 diff 工件
         if: steps.pr.outputs.number
@@ -58,7 +81,7 @@ jobs:
           PR_NUMBER: ${{ steps.pr.outputs.number }}
         run: |
           if [ -z "$AI_API_KEY" ]; then
-            echo "AI_API_KEY 未配置，跳过 AI 审查（请在仓库 Secrets 中添加后自动生效）"
+            echo "::warning::AI_API_KEY 未配置，跳过 AI 审查（请在仓库 Secrets 中添加后自动生效）"
             exit 0
           fi
           # 过大的 diff 截断，避免超出上下文
@@ -77,7 +100,7 @@ jobs:
               "$AI_BASE_URL/messages" \
               -d @req.json)
             if [ "$code" != "200" ]; then
-              echo "AI API 返回 $code："; cat resp.json; exit 0
+              echo "AI API 返回 $code："; cat resp.json; exit 1
             fi
             jq -r '[.content[]? | select(.type == "text") | .text] | join("\n")' resp.json > review.md
           else
@@ -93,7 +116,7 @@ jobs:
               "$AI_BASE_URL/chat/completions" \
               -d @req.json)
             if [ "$code" != "200" ]; then
-              echo "AI API 返回 $code："; cat resp.json; exit 0
+              echo "AI API 返回 $code："; cat resp.json; exit 1
             fi
             jq -r '.choices[0].message.content' resp.json > review.md
           fi
