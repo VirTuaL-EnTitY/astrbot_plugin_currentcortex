@@ -95,8 +95,8 @@ Pixiv random images · Hitokoto quotes · Weather · Femboy images · NetEase Cl
 | 👗 **Femboy Images** | Random femboy-themed images (WebP) |
 | 🔌 **DG-LAB** | Full device lifecycle management over Socket V3/V4 (legacy V2 compatible), protocol auto-detection, multi-user/multi-device isolation, CCDG WebUI control panel |
 | 🖥️ **Master Pages** | All-in-one panel integrated into the AstrBot WebUI: dashboard · help center · visual settings (hot-reload on save) · DG-LAB control (one-click relay server deployment · public-exposure toggle) · contact us |
-| 🧩 **Per-Group Toggle** | Turn every plugin command on/off per group with `/toggle` (supports timed disable with auto-recovery), without affecting other groups |
-| 🧠 **Cross-Group Memory** | All groups on a platform share one persistent context, automatically injected into LLM requests (with optional age filtering and keyword-based cleanup) |
+| 🧩 **Per-Group Toggle** | Turn plugin commands on/off per group with `/toggle` (timed auto-recovery and per-category scope control supported), without affecting other groups |
+| 🧠 **Cross-Group Memory** | All groups on a platform share one persistent context, automatically injected into LLM requests (with optional age filtering, LLM summarization, and keyword-based cleanup) |
 | ✂️ **Segmented Replies** | Split bot replies into multiple messages sent one by one, mimicking human chatting. Three modes: punctuation / length / LLM semantic |
 | 🤖 **LLM Tools** | Register image fetching / song requests / shock control as AI-callable tools (function calling), so the AI can act on natural-language requests on its own |
 
@@ -182,9 +182,10 @@ Every command accepts both Chinese and English aliases:
 | `/weather` | `/天气` | Weather lookup |
 | `/femboy` | `/男娘` | Femboy image |
 | `/dglab` | `/电击` | DG-LAB device management |
-| `/开关` | `/toggle` `/switch` | Turn this plugin's commands on/off for a group (timed supported) |
-| `/开关列表` | `/switch_list` `/开关状态列表` | List disabled groups on this platform (admin) |
+| `/开关` | `/toggle` `/switch` | Turn this plugin's commands on/off for a group (timed and per-category scope supported) |
+| `/开关列表` | `/switch_list` `/开关状态列表` | List disabled groups and scopes on this platform (admin) |
 | `/忘记` | `/forget_memory` `/忘记记忆` | Remove cross-group memory records by keyword (admin) |
+| `/帮助` | `/cc` `/help` `/菜单` | Full plugin command overview |
 | `/apitest` | `/连通测试` `/接口测试` | API connectivity test |
 
 ---
@@ -267,7 +268,7 @@ Auto-detects the platform behind Xiaohongshu, Bilibili, Douyin, and Weibo links 
 
 | Command | Description |
 | --- | --- |
-| `/解析 <link>` | Auto-detect the platform and parse |
+| `/解析 <link>` | Auto-detect the platform and parse; **a message with multiple links parses them one by one (up to 5)** |
 | `/xhs <link>` (`/小红书`) | Xiaohongshu parsing |
 | `/bilibili <link>` (`/B站` `/b站`) | Bilibili video parsing |
 | `/douyin <link>` (`/抖音`) | Douyin video parsing |
@@ -287,6 +288,7 @@ Auto-detects the platform behind Xiaohongshu, Bilibili, Douyin, and Weibo links 
 
 ```text
 /解析 https://www.xiaohongshu.com/explore/abc123
+/解析 https://b23.tv/xxxx https://v.douyin.com/yyyy   # batch: multiple links in one message
 /xhs https://xhslink.com/xxxx
 /bilibili https://www.bilibili.com/video/BV1xx411c7mD
 /douyin https://v.douyin.com/xxxx
@@ -299,6 +301,17 @@ Auto-detects the platform behind Xiaohongshu, Bilibili, Douyin, and Weibo links 
 - **Bilibili**: title, uploader, duration, views/likes, cover, part (P) info, video download link (if any)
 - **Douyin**: title, author, likes/comments/shares, watermark-free video link
 - **Weibo**: text, author, reposts/comments/likes, images (up to 9), video link (if any)
+
+#### Parsing Enhancements
+
+- **Graded failure hints**: parse failures no longer dump raw exception text — they are classified by cause (link expired, content deleted/private, platform anti-scraping, network timeout, unrecognized format, etc.) so you can tell link problems from network problems.
+- **Result caching**: the same link returns the previous parse result within the validity window (10 minutes by default, adjustable via `media_parse_cache_ttl`), reducing request frequency to target platforms and the chance of triggering anti-scraping/IP bans; only successful results are cached — failures retry in real time.
+- **Cross-group memory integration**: with cross-group memory enabled, every successful parse is recorded with the `media` tag ("who parsed what"), so later conversations can naturally refer back to "that video you just sent".
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `media_parse_cache_enable` | bool | true | Enable the parse result cache |
+| `media_parse_cache_ttl` | int | 600 | Cache validity in seconds. Download/stream links themselves expire — don't set this too long |
 
 > ⚠️ Make sure the link is publicly accessible; anti-scraping measures on some platforms may cause parsing to fail. Download links are for personal study only — please respect each platform's terms.
 
@@ -542,36 +555,46 @@ Each group can independently turn this plugin on or off without affecting others
 | --- | --- |
 | `/开关 off` | **Disable permanently** all plugin commands in this group (pixiv / parsing / music / … all stop responding) |
 | `/开关 off <duration>` | **Timed disable** with automatic recovery, e.g. `/开关 off 2h`, `/开关 off 30m`, `/开关 off 1d`, `/开关 off 2小时30分钟` |
+| `/开关 off <scope> [duration]` | **Disable one category only**, e.g. `/开关 off media 2h` turns off just media parsing for 2 hours |
 | `/开关 on` | **Re-enable** the plugin's commands in this group (also ends a timed disable early) |
-| `/开关 status` | Show the current state for this group (timed disables show the estimated recovery time) |
-| `/开关列表` (`/switch_list` `/开关状态列表`) | **Admin**: list all disabled groups on this platform with their recovery times |
+| `/开关 on <scope>` | Re-enable one category only, e.g. `/开关 on media` |
+| `/开关 status [scope]` | Show the current state for this group (timed disables show the estimated recovery time) |
+| `/开关列表` (`/switch_list` `/开关状态列表`) | **Admin**: list all disabled groups (with scopes) on this platform and their recovery times |
 | `/开关` | No argument = show status + usage hint |
 
 > Aliases: `/toggle`, `/switch` (e.g. `/toggle off 2h`). The Chinese command `/开关` also accepts `关` (off) / `开` (on) / `状态` (status) as arguments. Duration units: `s`/`秒`, `m`/`分`/`分钟`, `h`/`时`/`小时`, `d`/`天` — combinable.
+>
+> **Scopes** (optional; omit = global, all commands): `media` media parsing · `image` image fetching · `music` song requests · `utility` utilities · `dglab` DG-LAB devices · `memory` cross-group memory. Chinese names also work (e.g. `/开关 off 图片`).
 
 #### Example
 
 ```text
 /开关 off       # turn off all CurrentCortex commands in this group permanently
 /开关 off 10h   # turn off for 10 hours (e.g. overnight do-not-disturb; auto-recovers)
-/开关 status    # state: ⛔ disabled (⏳ auto-recovers in 9h58m)
-/开关列表       # admin: list all disabled groups on this platform
+/开关 off media 2h   # turn off only media parsing for 2 hours; songs/images keep working
+/开关 status media   # media scope state (⏳ auto-recovers in 1h58m)
+/开关列表       # admin: list all disabled groups and scopes on this platform
+/开关 on media  # re-enable media parsing only
 /开关 on        # re-enable (works for permanent and timed disables)
 ```
 
 #### How It Works
 
 - **Persistent state**: stored in `data/currentcortex_group_switch.json` and survives restarts. The default (never configured) is **enabled** — only groups explicitly turned off with `/开关 off` are disabled.
-- **Timed auto-recovery**: `/开关 off <duration>` recovers automatically when it expires (lazy expiry check, no background timer needed); the countdown survives restarts.
+- **Scoped toggles**: storage keys are `umo` (global) or `umo|scope` (one category); a global disable takes precedence over any scope entry; legacy data (plain `umo` keys) is treated as global disables — no migration needed.
+- **Timed auto-recovery**: `/开关 off [scope] <duration>` recovers automatically when it expires (lazy expiry check, no background timer needed); the countdown survives restarts.
+- **One-shot hint while disabled**: the first use of an affected command after a disable gets a short hint (e.g. "media parsing is disabled in this group"), throttled to once per hour per group per category. Disable via `group_switch_hint_enable`.
 - **Never deadlocks**: the `/开关` and `/开关列表` commands themselves **always work** — even in a disabled group, `/开关 on` re-enables it; they are never intercepted.
 - **Permissions**: by default only **group admins** (as identified by the framework) may operate it, preventing random members from flipping the switch. If you aren't recognized as an admin, disable `group_switch_admin_only` in the config. `/开关列表` is always admin-only.
 - **Scoped to this plugin**: the toggle only intercepts CurrentCortex commands; other AstrBot plugins and core bot features are unaffected.
+- **⚠️ LLM tools are not scope-limited**: scopes constrain user commands only; abilities the AI invokes on its own via LLM tools (images/songs/DG-LAB) bypass command entry points and are unaffected by scope disables (a global disable still blocks them). If that matters, also turn off `llm_tools_enable`.
 - **DMs unaffected**: the toggle applies to group chats only.
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | `group_switch_enable` | bool | true | Enable the per-group toggle feature (when off, the guard doesn't run at all) |
 | `group_switch_admin_only` | bool | true | Only group admins may use `/开关` |
+| `group_switch_hint_enable` | bool | true | Reply with a one-shot hint on first command use while disabled (once per hour per group per category) |
 
 ---
 
@@ -671,6 +694,7 @@ Optional feature: shares one **persistent** memory across all groups on the same
 - **Storage**: `data/currentcortex_cross_group.json`, bucketed per platform instance (`platform_id`), preserved across restarts.
 - **Recording**: non-command group messages are formatted as `[nickname/HH:MM:SS]: text` and appended in a rolling fashion (old records are trimmed past the cap).
 - **Injection**: when a group message triggers an LLM request, the most recent records from the other groups on the same platform are injected into the user-message part as a `<system_reminder>`; with `cross_group_max_age_hours` set, only records within that window are injected, so cold groups no longer dig up stale topics.
+- **LLM summarization (optional)**: with `cross_group_summary_enable` on, once the record count exceeds the threshold the raw records are first compressed by an LLM into a short topical digest ("recently people have been talking about X, Y") before injection — fewer tokens, more focused. Failures (no provider / timeout / empty result) fall back to raw-record injection; the same memory reuses its digest for 5 minutes. Note: this adds one LLM call (up to 20 s) on the reply path — configure a cheap, fast model.
 - **Slash commands never recorded**: command messages don't enter memory.
 - **Keyword cleanup**: admins can send `/忘记 <keyword>` (aliases `/forget_memory` `/忘记记忆`) to delete every record containing that keyword from this platform's memory (substring match, case-insensitive) — precise cleanup of mis-recorded content without wiping the whole platform's memory.
 
@@ -680,6 +704,9 @@ Optional feature: shares one **persistent** memory across all groups on the same
 | `cross_group_max_cnt` | 500 | Maximum records kept per platform |
 | `cross_group_inject_cnt` | 30 | Recent records injected per reply |
 | `cross_group_max_age_hours` | 0 | Only inject records from the last N hours (`0` = no age limit, trim by count only, i.e. the old behavior; 12~48 recommended) |
+| `cross_group_summary_enable` | false | Enable LLM summarization (compress records into a topical digest when above the threshold) |
+| `cross_group_summary_threshold` | 20 | Injection count threshold that triggers summarization (below it, raw records are injected directly) |
+| `cross_group_summary_provider_id` | (empty) | Dedicated model for summaries; empty = reuse the current session model. A cheap, fast non-reasoning model is recommended |
 
 > ⚠️ Enabling this feeds the chat content of other groups to the LLM — make sure that matches your privacy expectations and that the members of each group are aware and consenting.
 

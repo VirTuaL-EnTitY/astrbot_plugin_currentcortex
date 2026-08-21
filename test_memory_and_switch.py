@@ -669,6 +669,190 @@ def test_forget_command_empty_keyword_hint():
         shutil.rmtree(d, ignore_errors=True)
 
 
+# --------------------------------------------------------------------------- #
+# scope 分级开关（v2.2.0）与媒体解析批量
+# --------------------------------------------------------------------------- #
+
+
+def test_store_scope_semantics():
+    d = _tmp_data_dir()
+    try:
+        store = GroupSwitchStore(data_dir=d)
+        store.set_disabled("u1", scope="media", duration_seconds=3600)
+        # scope 禁用不影响全局，也不影响其他 scope
+        assert store.is_enabled("u1") is True
+        assert store.is_enabled("u1", "media") is False
+        assert store.is_enabled("u1", "music") is True
+        # has_disabled_entry 只看条目本身，不受全局连带影响
+        assert store.has_disabled_entry("u1", "media") is True
+        assert store.has_disabled_entry("u1", "music") is False
+        store.set_disabled("u1")  # 全局也关
+        assert store.is_enabled("u1", "media") is False  # 全局优先
+        assert store.has_disabled_entry("u1", "media") is True  # 条目仍在
+        store.set_enabled("u1")  # 解除全局
+        assert store.is_enabled("u1", "media") is False  # scope 仍单独禁用
+        store.set_enabled("u1", scope="media")
+        assert store.is_enabled("u1", "media") is True
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def test_store_scoped_key_load_and_legacy():
+    d = _tmp_data_dir()
+    try:
+        path = os.path.join(d, "currentcortex_group_switch.json")
+        _write_json(
+            path,
+            {"disabled": {"old-umo": None, "u|music": time.time() + 60}},
+        )
+        store = GroupSwitchStore(data_dir=d)
+        # 旧纯 umo key = 全局禁用；复合 key = 域级禁用
+        assert store.is_enabled("old-umo") is False
+        assert store.is_enabled("u") is True
+        assert store.is_enabled("u", "music") is False
+        assert store.is_enabled("u", "media") is True
+        det = {f'{x["umo"]}|{x["scope"]}': x for x in store.list_disabled_detail()}
+        assert "old-umo|None" in det and det["u|music"]["permanent"] is False
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def test_parse_switch_scope_tokens():
+    inst = PluginCls.__new__(PluginCls)
+    cases = {
+        "/开关 off media 2h": "media",
+        "/开关 off 媒体解析": "media",
+        "/开关 off 音乐 30m": "music",
+        "/开关 on 电击": "dglab",
+        "/开关 media": "media",          # 省略动作词 = 查询该域
+        "/开关 off 2h": None,
+        "/开关 off": None,
+        "/开关 status 跨群记忆": "memory",
+        "/开关 off 天气": None,          # 非域词不误判
+    }
+    for msg, expect in cases.items():
+        got = inst._parse_switch_scope(msg)
+        assert got == expect, f"{msg!r}: 期望 {expect}, 实际 {got}"
+
+
+def test_parse_switch_duration_skips_scope_token():
+    inst = PluginCls.__new__(PluginCls)
+    assert inst._parse_switch_duration("/开关 off media 2h") == 7200.0
+    assert inst._parse_switch_duration("/开关 off 2h image") == 7200.0
+    # 域参数后跟坏时长仍要报错，不能静默
+    try:
+        inst._parse_switch_duration("/开关 off media 2x")
+        raise AssertionError("应当抛出 ValueError")
+    except ValueError:
+        pass
+
+
+def test_detect_command_scope():
+    dc = PluginCls._detect_command_scope
+    assert dc("/解析 https://x") == "media"
+    assert dc("/B站 BV1xx") == "media"
+    assert dc("/pixiv") == "image"
+    assert dc("/点歌 晴天") == "music"
+    assert dc("今天天气不错") is None
+    assert dc("/忘记 关键词") is None  # 杂项命令不属于任何功能域
+
+
+def test_switch_on_scope_ordering_regression():
+    """/开关 on <scope> 在全局关闭时不得误删 scope 条目（先判断后操作）。"""
+    d = _tmp_data_dir()
+    try:
+        store = GroupSwitchStore(data_dir=d)
+        umo = "aiocqhttp:GroupMessage:555"
+        store.set_disabled(umo, scope="media", duration_seconds=3600)
+        store.set_disabled(umo)  # 全局也关
+        inst = _make_plugin(switch_store=store)
+        text = _texts(
+            _run_command(inst.group_switch_command(FakeEvent("/开关 on media", umo=umo)))
+        )
+        # scope 条目被显式恢复（用户明确要求），并如实提示全局仍关闭
+        assert "已在本群重新启用" in text and "全局仍处于关闭状态" in text, text
+        assert store.has_disabled_entry(umo, "media") is False
+        assert store.is_enabled(umo) is False  # 全局条目不受影响
+
+        # 反例：全局关 + 域未被单独关 → 只提示、零状态变更
+        store2 = GroupSwitchStore(data_dir=d + "2")
+        store2.set_disabled("u")
+        inst2 = _make_plugin(switch_store=store2)
+        before = store2.list_disabled_detail()
+        text2 = _texts(
+            _run_command(inst2.group_switch_command(FakeEvent("/开关 on media", umo="u")))
+        )
+        assert "并未被单独关闭" in text2 and "全局" in text2, text2
+        assert store2.list_disabled_detail() == before  # 不得有任何误删
+
+        # 常规：仅域禁用（全局开）→ 干净恢复
+        store3 = GroupSwitchStore(data_dir=d + "3")
+        store3.set_disabled("u", scope="media")
+        inst3 = _make_plugin(switch_store=store3)
+        text3 = _texts(
+            _run_command(inst3.group_switch_command(FakeEvent("/开关 on media", umo="u")))
+        )
+        assert "已在本群重新启用" in text3 and "全局仍处于关闭" not in text3, text3
+        assert store3.list_disabled_detail() == []
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+        shutil.rmtree(d + "2", ignore_errors=True)
+        shutil.rmtree(d + "3", ignore_errors=True)
+
+
+def test_switch_list_shows_scope_label():
+    d = _tmp_data_dir()
+    try:
+        store = GroupSwitchStore(data_dir=d)
+        store.set_disabled(
+            "aiocqhttp:GroupMessage:111", scope="media", duration_seconds=3600
+        )
+        store.set_disabled("aiocqhttp:GroupMessage:222", scope="music")  # 永久
+        inst = _make_plugin(switch_store=store)
+        text = _texts(
+            _run_command(
+                inst.group_switch_list_command(
+                    FakeEvent("/开关列表", umo="aiocqhttp:GroupMessage:999")
+                )
+            )
+        )
+        # 限时域条目：显示功能名 + 恢复时间
+        assert "群 111" in text and "媒体解析" in text and "自动恢复" in text, text
+        # 永久域条目：恢复命令带域参数
+        assert "群 222" in text and "音乐点歌" in text, text
+        assert "/开关 on music" in text
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def test_media_urls_extraction_and_batch_limit_message():
+    inst = PluginCls.__new__(PluginCls)
+    inst._cross_group_enable = False
+    inst._cross_group_store = None
+    inst._media_parser = _FakeMediaParserManager()
+    urls = inst._parse_media_urls(
+        "/解析 https://b23.tv/a https://b23.tv/a https://v.douyin.com/b。"
+    )
+    # 去重保序，尾部中文标点剥离
+    assert urls == ["https://b23.tv/a", "https://v.douyin.com/b"], urls
+    assert inst._parse_media_urls("/xhs https://xhslink.com/abc") == [
+        "https://xhslink.com/abc"
+    ]
+    # 上限提示必须报告原始条数（截断前），而非恒等于上限值
+    links = " ".join(f"https://b23.tv/x{i}" for i in range(7))
+    outputs = _run_command(inst.media_parse_command(FakeEvent(f"/解析 {links}")))
+    text = _texts(outputs)
+    assert "检测到 7 条链接" in text, text[:200]
+    assert "已取前 5 条" in text
+
+
+class _FakeMediaParserManager:
+    """media_parse_command 测试用的解析管理器桩。"""
+
+    async def parse(self, url):
+        return {"platform": "", "data": {}}
+
+
 TESTS = [
     # cross_group_memory
     test_legacy_string_records_migrate_on_load,
@@ -698,6 +882,15 @@ TESTS = [
     test_switch_list_command_empty,
     test_forget_command_alias_keyword_extraction,
     test_forget_command_empty_keyword_hint,
+    # scope 分级开关与媒体批量（v2.2.0）
+    test_store_scope_semantics,
+    test_store_scoped_key_load_and_legacy,
+    test_parse_switch_scope_tokens,
+    test_parse_switch_duration_skips_scope_token,
+    test_detect_command_scope,
+    test_switch_on_scope_ordering_regression,
+    test_switch_list_shows_scope_label,
+    test_media_urls_extraction_and_batch_limit_message,
 ]
 
 

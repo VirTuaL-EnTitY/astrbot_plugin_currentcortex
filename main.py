@@ -111,7 +111,9 @@ COMMAND_CATEGORIES = [
         "icon": "settings",
         "title": "插件管理",
         "commands": [
-            {"cmd": "/开关", "alias": "toggle", "desc": "按群聊独立开启/关闭本插件"},
+            {"cmd": "/帮助", "alias": "help/cc/菜单", "desc": "查看本插件全部功能总览"},
+            {"cmd": "/开关", "alias": "toggle", "desc": "按群聊/按功能域分级开关插件（可只关某一类）"},
+            {"cmd": "/开关列表", "alias": "switch_list", "desc": "查看当前平台被关闭的群与功能域"},
             {"cmd": "/交流群", "alias": "群号/加群", "desc": "查询插件官方交流群号"},
             {"cmd": "/apitest", "alias": "连通测试", "desc": "诊断 LeiZ API 接口连通状态"},
         ],
@@ -380,6 +382,7 @@ MEDIA_PARSER_HELP_TEXT = """🔍 媒体内容解析 使用说明
 
 📌 基本命令
   /解析 <链接>           自动识别平台并解析内容（别名：/解析）
+                        支持一条消息包含多个链接（最多 5 条，依次解析）
   /xhs <链接>           解析小红书内容（别名：/小红书）
   /bilibili <链接>      解析B站视频（别名：/B站）
   /douyin <链接>        解析抖音视频（别名：/抖音）
@@ -436,6 +439,8 @@ MEDIA_PARSER_HELP_TEXT = """🔍 媒体内容解析 使用说明
 ⚠️ 注意事项
   • 请确保链接可公开访问
   • 部分平台可能因反爬策略导致解析失败
+  • 解析失败会按原因分级提示（链接过期/内容已删除/平台拦截/网络超时等）
+  • 相同链接短时间内的重复解析会直接返回缓存结果（默认 10 分钟）
   • 下载链接仅供个人学习使用，请遵守平台规范
   • 如遇问题可发送 /解析 help 查看帮助"""
 
@@ -1195,7 +1200,19 @@ class CurrentCortexPlugin(Star):
                 )
 
         self._leiz_api_key = leiz_api_key
-        self._media_parser = MediaParserManager(timeout=self._request_timeout)
+        # 媒体解析结果缓存：群里常有人重复发同一条链接，命中缓存直接返回，
+        # 减少对目标平台的请求频率（降低触发反爬/封 IP 概率）。仅缓存成功结果。
+        self._media_parse_cache_enable = bool(
+            config.get("media_parse_cache_enable", True)
+        )
+        self._media_parse_cache_ttl = max(
+            0, int(config.get("media_parse_cache_ttl", 600))
+        )
+        self._media_parser = MediaParserManager(
+            timeout=self._request_timeout,
+            cache_enable=self._media_parse_cache_enable,
+            cache_ttl=float(self._media_parse_cache_ttl),
+        )
 
         if not leiz_api_key:
             # 未配置统一 API Key：禁用所有依赖 LeiZ 接口的客户端，相关命令会在
@@ -1354,6 +1371,22 @@ class CurrentCortexPlugin(Star):
         self._cross_group_max_age_hours = max(
             0.0, float(config.get("cross_group_max_age_hours", 0))
         )
+        # LLM 记忆摘要：记录数超过阈值时先调 LLM 压缩成一段话题摘要再注入，
+        # 而不是把几十条原始消息全部丢进 prompt（省 token，也更像「记得住重点」）。
+        # 摘要失败（无 provider / 超时 / 返回异常）自动降级为原始记录注入。
+        self._cross_group_summary_enable = bool(
+            config.get("cross_group_summary_enable", False)
+        )
+        self._cross_group_summary_threshold = max(
+            1, int(config.get("cross_group_summary_threshold", 20))
+        )
+        # 摘要专用 provider：留空复用当前会话模型（建议配廉价快速模型）
+        self._cross_group_summary_provider_id = str(
+            config.get("cross_group_summary_provider_id", "")
+        ).strip()
+        # 摘要结果缓存：platform_id -> {"fingerprint", "summary", "ts"}。
+        # 同一份记忆（指纹相同）5 分钟内不重复调用 LLM，避免每次回复都压缩一遍。
+        self._cross_group_summary_cache: Dict[str, Dict[str, Any]] = {}
         self._cross_group_store: "CrossGroupMemoryStore | None" = None
         if self._cross_group_enable:
             try:
@@ -1361,26 +1394,36 @@ class CurrentCortexPlugin(Star):
                 logger.info(
                     f"[CrossGroupMemory] 已启用跨群聊记忆 "
                     f"(max_cnt={self._cross_group_max_cnt}, inject_cnt={self._cross_group_inject_cnt}, "
-                    f"max_age_hours={self._cross_group_max_age_hours or '不限'})"
+                    f"max_age_hours={self._cross_group_max_age_hours or '不限'}, "
+                    f"llm_summary={'on@' + str(self._cross_group_summary_threshold) if self._cross_group_summary_enable else 'off'})"
                 )
             except Exception as e:
                 logger.warning(f"[CrossGroupMemory] 初始化失败，已禁用: {e}")
                 self._cross_group_store = None
                 self._cross_group_enable = False
 
-        # 按群聊独立开关插件：可在单个群用 /开关 命令关闭/开启本插件全部命令。
+        # 按群聊独立开关插件：可在单个群用 /开关 命令关闭/开启本插件全部命令，
+        # 也可带 scope 参数只关闭某一类功能（如 /开关 off media 2h）。
         # 存储为「黑名单」语义——默认所有会话启用，只有显式关闭的群会被守卫拦截。
         self._group_switch_enable = bool(config.get("group_switch_enable", True))
         self._group_switch_admin_only = bool(
             config.get("group_switch_admin_only", True)
         )
+        # 关闭期间的「仅提醒一次」：新用户不知道插件被关了会一直 @机器人没反应，
+        # 第一次收到本插件指令时回一句短提示，同一群 1 小时内不重复（防刷屏）。
+        self._group_switch_hint_enable = bool(
+            config.get("group_switch_hint_enable", True)
+        )
+        # 提醒节流：key（umo 或 umo|scope）-> 上次提醒时间戳
+        self._switch_hint_ts: Dict[str, float] = {}
         self._group_switch_store: "GroupSwitchStore | None" = None
         if self._group_switch_enable:
             try:
                 self._group_switch_store = GroupSwitchStore(data_dir="data")
                 logger.info(
                     "[GroupSwitch] 已启用按群聊开关功能"
-                    f"（admin_only={self._group_switch_admin_only}）"
+                    f"（admin_only={self._group_switch_admin_only}, "
+                    f"hint_once={self._group_switch_hint_enable}）"
                 )
             except Exception as e:
                 logger.warning(f"[GroupSwitch] 初始化失败，已禁用: {e}")
@@ -1476,13 +1519,72 @@ class CurrentCortexPlugin(Star):
             pass
         return (0.8, 2.5)
 
+    # =================================================================== #
+    # 分级开关（scope）：把插件命令按功能域分组，/开关 可只关某一类。
+    # commands 为该域包含的命令名（小写比较，用于守卫识别消息命中哪个域）；
+    # aliases 为 /开关 参数中可用的域别名；memory 域无命令（被动监听），
+    # 由跨群记忆的记录/注入入口自行检查。
+    # =================================================================== #
+    _SWITCH_SCOPES: Dict[str, Dict[str, Any]] = {
+        "media": {
+            "label": "媒体解析",
+            "commands": ("解析", "xhs", "小红书", "bilibili", "b站", "douyin", "抖音", "weibo", "微博"),
+            "aliases": ("media", "媒体", "解析"),
+        },
+        "image": {
+            "label": "图片获取",
+            "commands": ("pixiv", "图片", "femboy", "男娘"),
+            "aliases": ("image", "图片"),
+        },
+        "music": {
+            "label": "音乐点歌",
+            "commands": ("music", "音乐", "点歌", "音源"),
+            "aliases": ("music", "音乐", "点歌"),
+        },
+        "utility": {
+            "label": "实用工具",
+            "commands": ("hitokoto", "一言", "weather", "天气"),
+            "aliases": ("utility", "工具", "实用工具"),
+        },
+        "dglab": {
+            "label": "DG-LAB 设备",
+            "commands": ("dglab", "电击"),
+            "aliases": ("dglab", "电击", "郊狼"),
+        },
+        "memory": {
+            "label": "跨群聊记忆",
+            "commands": (),
+            "aliases": ("memory", "记忆", "跨群记忆"),
+        },
+    }
+
+    # 不属于任何功能域、但属于本插件的杂项命令（用于关闭期间的提醒判定）
+    _MISC_PLUGIN_COMMANDS = (
+        "cc", "帮助", "help", "菜单",
+        "交流群", "群号", "加群", "plugin_group",
+        "apitest", "连通测试", "接口测试",
+        "忘记", "forget_memory", "忘记记忆",
+        "开关列表", "switch_list", "开关状态列表",
+    )
+
+    # 关闭期间「仅提醒一次」的节流间隔（同一群同一域）
+    _SWITCH_HINT_INTERVAL_SECONDS = 3600.0
+
     @filter.event_message_type(EventMessageType.ALL, priority=10)
     async def on_message_group_switch_guard(self, event: AstrMessageEvent):
-        """高优先级守卫：被关闭的群聊中，静默拦截本插件除开关命令外的所有命令。
+        """高优先级守卫：按「全局 / 功能域(scope)」两级黑名单拦截本插件命令。
 
         priority=10 高于普通命令处理器（默认 0），先于它们执行；此处若
         event.stop_event()，后续本插件命令都不会再触发。开关命令自身放行，
-        因此随时可用 /开关 on 重新启用，不会出现「关闭后无法再开」的死锁。
+        因此随时可用 /开关 on [scope] 重新启用，不会出现「关闭后无法再开」
+        的死锁。
+
+        - 全局关闭（旧版 /开关 off）：拦截该群所有消息（保持旧版行为）；
+        - 域级关闭（/开关 off media 2h）：仅拦截命中该域命令的消息，
+          其余功能不受影响。
+        关闭期间第一次收到本插件指令时回一句短提示（同一群同一域 1 小时内
+        仅提醒一次，见 _notify_switch_disabled_once），避免新用户 @机器人
+        没反应摸不着头脑。
         """
         if not self._group_switch_enable or self._group_switch_store is None:
             return
@@ -1491,14 +1593,93 @@ class CurrentCortexPlugin(Star):
             if event.get_message_type() != MessageType.GROUP_MESSAGE:
                 return
             umo = event.unified_msg_origin
-            if not umo or self._group_switch_store.is_enabled(umo):
+            if not umo:
                 return
-            # 该群已被关闭：若是开关命令则放行（保证可重新启用），否则静默拦截
+            if self._group_switch_store.is_enabled(umo):
+                # 全局启用：再看消息命中的功能域是否被单独关闭
+                scope = self._detect_command_scope(event.message_str)
+                if scope and not self._group_switch_store.is_enabled(umo, scope):
+                    await self._notify_switch_disabled_once(event, umo, scope)
+                    event.stop_event()
+                return
+            # 该群已被全局关闭：若是开关命令则放行（保证可重新启用），否则拦截
             if self._is_switch_command(event.message_str):
                 return
+            # 普通闲聊不提醒（不知情用户面前刷屏没有意义），只拦命令
+            if self._is_plugin_command(event.message_str):
+                await self._notify_switch_disabled_once(event, umo, None)
             event.stop_event()
         except Exception as e:
             logger.error(f"[GroupSwitch] 守卫处理异常（默认放行）: {e}")
+
+    @classmethod
+    def _detect_command_scope(cls, message: str) -> Optional[str]:
+        """判断消息命中哪个功能域的命令；非本插件域命令返回 None。
+
+        与 AstrBot 命令匹配口径一致：命令名等于首个空白分隔 token，
+        即「精确相等」或「命令名 + 空格 + 参数」两种形态。
+        """
+        if not message:
+            return None
+        normalized = re.sub(r"^[/!！]\s*", "", message.strip()).strip().lower()
+        if not normalized:
+            return None
+        for scope, spec in cls._SWITCH_SCOPES.items():
+            for cmd in spec["commands"]:
+                if normalized == cmd or normalized.startswith(cmd + " "):
+                    return scope
+        return None
+
+    @classmethod
+    def _is_plugin_command(cls, message: str) -> bool:
+        """判断消息是否为本插件命令（任意功能域或杂项命令）。"""
+        if cls._detect_command_scope(message):
+            return True
+        if not message:
+            return False
+        normalized = re.sub(r"^[/!！]\s*", "", message.strip()).strip().lower()
+        return any(
+            normalized == kw or normalized.startswith(kw + " ")
+            for kw in cls._MISC_PLUGIN_COMMANDS
+        )
+
+    async def _notify_switch_disabled_once(
+        self, event: AstrMessageEvent, umo: str, scope: Optional[str]
+    ) -> None:
+        """关闭期间首次收到本插件指令时回复一句短提示（1 小时节流）。
+
+        发送失败只记日志不影响拦截主流程；节流表纯内存，重启后重置。
+        """
+        if not self._group_switch_hint_enable:
+            return
+        key = f"{umo}|{scope}" if scope else umo
+        now = time.time()
+        if now - self._switch_hint_ts.get(key, 0.0) < self._SWITCH_HINT_INTERVAL_SECONDS:
+            return
+        self._switch_hint_ts[key] = now
+        # 防长期运行膨胀：超限时清理已过期的节流项
+        if len(self._switch_hint_ts) > 512:
+            self._switch_hint_ts = {
+                k: v
+                for k, v in self._switch_hint_ts.items()
+                if now - v < self._SWITCH_HINT_INTERVAL_SECONDS
+            }
+        if scope is None:
+            text = (
+                "💤 本群已关闭 CurrentCortex 插件全部功能，"
+                "管理员可发送 /开关 on 恢复\n（本提示 1 小时内仅提醒一次）"
+            )
+        else:
+            label = self._SWITCH_SCOPES.get(scope, {}).get("label", scope)
+            text = (
+                f"💤 本群已单独关闭「{label}」功能，"
+                f"管理员可发送 /开关 on {scope} 恢复，其余功能不受影响\n"
+                "（本提示 1 小时内仅提醒一次）"
+            )
+        try:
+            await event.send(event.plain_result(text))
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[GroupSwitch] 发送关闭提醒失败: {e}")
 
     def _is_switch_command(self, message: str) -> bool:
         """判断消息是否为本插件的开关命令（含中英文与别名、带/不带前缀）。
@@ -1523,9 +1704,11 @@ class CurrentCortexPlugin(Star):
 
     @filter.command("开关", alias={"toggle", "switch"}, priority=10)
     async def group_switch_command(self, event: AstrMessageEvent):
-        """按群聊独立开启/关闭本插件全部命令。
+        """按群聊独立开启/关闭本插件命令（支持按功能域 scope 分级）。
 
         无参数=查看当前状态；on/开=启用；off/关=关闭；status/状态=查看状态。
+        以上动作均可带可选的功能域参数（如 /开关 off media 2h 只关媒体解析），
+        不带功能域则为全局开关（旧行为，关闭全部命令）。
         仅在群聊中有效；默认仅群管理员可操作。
         """
         if not self._group_switch_enable or self._group_switch_store is None:
@@ -1556,24 +1739,32 @@ class CurrentCortexPlugin(Star):
 
         message_str = event.message_str.strip()
         action = self._parse_switch_action(message_str)
+        scope = self._parse_switch_scope(message_str)
+        # 提示文案中的目标描述：「媒体解析」功能 / 全部命令
+        scope_label = self._SWITCH_SCOPES.get(scope, {}).get("label", scope)
+        target_desc = f"「{scope_label}」功能" if scope else "全部命令"
 
-        currently_enabled = self._group_switch_store.is_enabled(umo)
+        currently_enabled = self._group_switch_store.is_enabled(umo, scope)
 
         if action == "status":
             state = "✅ 已启用" if currently_enabled else "⛔ 已关闭"
             extra = ""
             if not currently_enabled:
-                until = self._group_switch_store.get_until(umo)
+                until = self._group_switch_store.get_until(umo, scope)
                 extra = (
                     "\n" + self._format_switch_until(until)
                     if until is not None
                     else "\n⏳ 永久禁用（需手动 /开关 on 恢复）"
                 )
             yield event.plain_result(
-                f"🔌 本群插件状态\n{state}{extra}\n\n"
+                f"🔌 本群{target_desc}状态\n{state}{extra}\n\n"
                 "💡 用法：\n"
-                "  /开关 off [时长]  关闭本群全部插件命令（可选时长如 2h/30m/1d）\n"
-                "  /开关 on   重新启用"
+                "  /开关 off [功能域] [时长]  关闭（功能域可选："
+                "media 媒体解析 / image 图片 / music 点歌 / utility 工具 / "
+                "dglab 电击 / memory 跨群记忆；不填则为全局全部命令；"
+                "时长如 2h/30m/1d，不填则永久）\n"
+                "  /开关 on [功能域]    重新启用\n"
+                "  /开关 status [功能域]  查看状态"
             )
             return
 
@@ -1582,50 +1773,95 @@ class CurrentCortexPlugin(Star):
                 duration = self._parse_switch_duration(message_str)
             except ValueError:
                 yield event.plain_result(
-                    "❌ 无法识别的禁用时长\n"
-                    "💡 用法：/开关 off 2h、/开关 off 30m、"
+                    "❌ 无法识别的禁用时长或功能域\n"
+                    "💡 用法：/开关 off 2h、/开关 off media 2h、"
                     "/开关 off 2小时30分钟；不带时长则为永久关闭"
                 )
                 return
             if not currently_enabled:
-                yield event.plain_result("ℹ️ 本群插件已经是关闭状态")
+                yield event.plain_result(
+                    f"ℹ️ 本群{target_desc}已经是关闭状态"
+                )
                 return
-            self._group_switch_store.set_disabled(umo, duration_seconds=duration)
+            self._group_switch_store.set_disabled(
+                umo, scope=scope, duration_seconds=duration
+            )
             logger.info(
-                f"[GroupSwitch] 用户 {user_name} 关闭了会话 {umo} 的插件"
+                f"[GroupSwitch] 用户 {user_name} 关闭了会话 {umo} 的"
+                f"{'功能域 ' + scope if scope else '全部命令'}"
                 + (f"（{duration:.0f}秒后自动恢复）" if duration else "（永久）")
             )
             recover_hint = (
                 self._format_switch_until(time.time() + duration)
                 if duration
-                else "💡 重新启用：发送 /开关 on"
+                else f"💡 重新启用：发送 /开关 on{' ' + scope if scope else ''}"
+            )
+            scope_note = (
+                f"\n（仅关闭{target_desc}，其余功能不受影响）"
+                if scope
+                else ""
             )
             yield event.plain_result(
-                "⛔ 已在本群关闭 CurrentCortex 插件全部命令\n\n"
-                f"{recover_hint}\n"
+                f"⛔ 已在本群关闭 CurrentCortex 插件{target_desc}\n\n"
+                f"{recover_hint}{scope_note}\n"
                 "（开关命令始终可用，不会被拦截）"
             )
             return
 
         if action == "on":
             if currently_enabled:
-                yield event.plain_result("ℹ️ 本群插件已经是启用状态")
+                yield event.plain_result(
+                    f"ℹ️ 本群{target_desc}已经是启用状态"
+                )
                 return
-            self._group_switch_store.set_enabled(umo)
-            logger.info(f"[GroupSwitch] 用户 {user_name} 启用了会话 {umo} 的插件")
+            if (
+                scope
+                and not self._group_switch_store.is_enabled(umo)
+                and not self._group_switch_store.has_disabled_entry(umo, scope)
+            ):
+                # 该功能域并未被单独关闭，真正拦着它的是全局关闭：
+                # 仅说明情况，不做任何状态变更（避免误动其他条目）
+                yield event.plain_result(
+                    f"ℹ️ 本群{target_desc}并未被单独关闭，"
+                    "但本群插件全局处于关闭状态\n"
+                    "💡 请先发送 /开关 on 恢复全局，再单独调整各功能域"
+                )
+                return
+            self._group_switch_store.set_enabled(umo, scope=scope)
+            logger.info(
+                f"[GroupSwitch] 用户 {user_name} 启用了会话 {umo} 的"
+                f"{'功能域 ' + scope if scope else '全部命令'}"
+            )
+            still_blocked_note = ""
+            if scope and not self._group_switch_store.is_enabled(umo, scope):
+                # 该域条目已按请求移除，但全局仍处于关闭状态
+                still_blocked_note = (
+                    "\n⚠️ 本群插件全局仍处于关闭状态，"
+                    "恢复全局（/开关 on）后该功能才会生效"
+                )
+            global_note = ""
+            if not scope and self._group_switch_store.list_disabled_detail():
+                # 全局恢复后，仍可能残留被单独关闭的功能域
+                global_note = (
+                    "\nℹ️ 如有被单独关闭的功能域（如 /开关 off media），"
+                    "可用 /开关 on <功能域> 逐个恢复，/开关列表 可查看"
+                )
             yield event.plain_result(
-                "✅ 已在本群重新启用 CurrentCortex 插件全部命令"
+                f"✅ 已在本群重新启用 CurrentCortex 插件{target_desc}"
+                f"{still_blocked_note}{global_note}"
             )
             return
 
         # 未知动作：给出帮助
         state = "✅ 已启用" if currently_enabled else "⛔ 已关闭"
         yield event.plain_result(
-            f"🔌 本群插件状态：{state}\n\n"
+            f"🔌 本群{target_desc}状态：{state}\n\n"
             "💡 用法：\n"
-            "  /开关 off（或 关）[时长]  关闭本群全部插件命令，可选时长如 2h/30m/1d\n"
-            "  /开关 on（或 开）   重新启用\n"
-            "  /开关 status（或 状态）  查看当前状态"
+            "  /开关 off（或 关）[功能域] [时长]  关闭，功能域可选"
+            "（media/image/music/utility/dglab/memory），不填则为全局全部命令；"
+            "时长如 2h/30m/1d\n"
+            "  /开关 on（或 开）[功能域]   重新启用\n"
+            "  /开关 status（或 状态）[功能域]  查看当前状态"
         )
 
     @filter.command("开关列表", alias={"switch_list", "开关状态列表"})
@@ -1662,14 +1898,22 @@ class CurrentCortexPlugin(Star):
             yield event.plain_result("✅ 当前平台没有被关闭插件的群聊")
             return
 
-        lines = [f"🔌 当前平台已关闭插件的群聊（共 {len(details)} 个）：", ""]
+        lines = [f"🔌 当前平台已关闭的插件条目（共 {len(details)} 个）：", ""]
         for item in details:
             session = item["umo"].rsplit(":", 1)[-1] or item["umo"]
+            scope = item.get("scope")
+            # 域级条目标注功能名，全局条目不标（等价旧版展示）
+            name = (
+                f"群 {session}｜{self._SWITCH_SCOPES[scope]['label']}"
+                if scope and scope in self._SWITCH_SCOPES
+                else f"群 {session}"
+            )
+            recover_cmd = f"/开关 on {scope}" if scope else "/开关 on"
             if item["permanent"]:
-                lines.append(f"  ⛔ 群 {session}｜永久禁用（需手动 /开关 on 恢复）")
+                lines.append(f"  ⛔ {name}｜永久禁用（需手动 {recover_cmd} 恢复）")
             else:
                 lines.append(
-                    f"  ⛔ 群 {session}｜{self._format_switch_until(item['until'])}"
+                    f"  ⛔ {name}｜{self._format_switch_until(item['until'])}"
                 )
         yield event.plain_result("\n".join(lines))
 
@@ -1708,11 +1952,53 @@ class CurrentCortexPlugin(Star):
         flags=re.IGNORECASE,
     )
 
+    @classmethod
+    def _match_scope_token(cls, token: str) -> Optional[str]:
+        """判断单个 token 是否为功能域参数（域名/别名/中文标签），返回 scope 名。"""
+        t = (token or "").strip().lower()
+        if not t:
+            return None
+        for scope, spec in cls._SWITCH_SCOPES.items():
+            aliases = {a.lower() for a in spec["aliases"]} | {scope, spec["label"].lower()}
+            if t in aliases:
+                return scope
+        return None
+
+    def _parse_switch_scope(self, message: str) -> Optional[str]:
+        """从开关命令消息中解析可选的功能域参数，如 ``/开关 off media 2h``。
+
+        无功能域参数返回 None（全局开关，保持旧版行为）；同时兼容省略动作词
+        的写法（如 ``/开关 media`` 视为查询该域状态）。
+        """
+        cleaned = re.sub(
+            r"^[/!！]\s*(开关|toggle|switch)\s*",
+            "",
+            message.strip(),
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
+            r"^(开关|toggle|switch)\s*",
+            "",
+            cleaned.strip(),
+            flags=re.IGNORECASE,
+        )
+        tokens = cleaned.strip().split()
+        if not tokens:
+            return None
+        # 常规形态：动作词之后的首个 scope 型 token
+        for token in tokens[1:]:
+            scope = self._match_scope_token(token)
+            if scope:
+                return scope
+        # 省略动作词形态：首 token 即 scope（/开关 media）
+        return self._match_scope_token(tokens[0])
+
     def _parse_switch_duration(self, message: str) -> Optional[float]:
         """解析 /开关 off 后的时长参数并换算为秒，仅对 off 动作有意义。
 
         支持单一或复合时长：``2h``、``30m``、``1d``、``2小时30分钟`` 等，
-        单位：s/秒、m/分/分钟、h/时/小时、d/天。
+        单位：s/秒、m/分/分钟、h/时/小时、d/天。中间夹着的功能域参数
+        （如 ``/开关 off media 2h`` 中的 ``media``）会被自动跳过。
 
         返回 None 表示未提供时长参数（永久禁用，兼容旧版 /开关 off 行为）。
         参数存在但无法完整解析（如 ``2x``、``2h30``）或总时长 <= 0 时抛出
@@ -1733,8 +2019,10 @@ class CurrentCortexPlugin(Star):
         tokens = cleaned.strip().split()
         if not tokens:
             return None
-        # 本函数仅在 action == "off" 时被调用，首 token 即动作词
-        arg = "".join(tokens[1:])
+        # 本函数仅在 action == "off" 时被调用，首 token 即动作词；
+        # 跳过功能域参数，剩余 token 拼接后应构成完整时长
+        args = [t for t in tokens[1:] if not self._match_scope_token(t)]
+        arg = "".join(args)
         if not arg:
             return None
 
@@ -1786,6 +2074,15 @@ class CurrentCortexPlugin(Star):
         text = event.message_str or ""
         return f"[{nickname}/{time_str}]: {text}".strip()
 
+    def _is_memory_scope_enabled(self, event: AstrMessageEvent) -> bool:
+        """跨群记忆功能域（/开关 off memory）是否在当前会话启用。"""
+        if not self._group_switch_enable or self._group_switch_store is None:
+            return True
+        umo = getattr(event, "unified_msg_origin", "") or ""
+        if not umo:
+            return True
+        return self._group_switch_store.is_enabled(umo, "memory")
+
     @filter.platform_adapter_type(filter.PlatformAdapterType.ALL)
     async def on_cross_group_message(self, event: AstrMessageEvent):
         """记录群聊消息到跨群聊记忆（同一平台实例下所有群共享）。"""
@@ -1793,6 +2090,9 @@ class CurrentCortexPlugin(Star):
             return
         try:
             if event.get_message_type() != MessageType.GROUP_MESSAGE:
+                return
+            # 跨群记忆被分级开关单独关闭（/开关 off memory）时不记录
+            if not self._is_memory_scope_enabled(event):
                 return
             # 跳过命令消息：斜杠命令是给机器人的指令，不应作为群聊上下文记录
             if event.get_extra("handlers_parsed_params", {}):
@@ -1812,15 +2112,116 @@ class CurrentCortexPlugin(Star):
         except Exception as e:
             logger.error(f"[CrossGroupMemory] 记录消息失败: {e}")
 
+    # LLM 记忆摘要的提示词：把原始记录压缩成话题级摘要再注入
+    _CROSS_GROUP_SUMMARY_PROMPT = (
+        "你是群聊记忆摘要助手。请把下面的群聊记录压缩成一段简短摘要，"
+        "概括大家最近在聊哪些话题、有哪些重点事件或共识。"
+        "保留关键人名与结论，忽略寒暄和无意义内容。"
+        "不超过 200 字，直接输出摘要正文，不要任何前缀、解释或 markdown。"
+    )
+    # 摘要缓存有效期：同一份记忆（指纹相同）在该时间内不重复调用 LLM
+    _CROSS_GROUP_SUMMARY_CACHE_TTL = 300.0
+    # 单次摘要调用超时；超时降级为原始记录注入（不能让摘要拖慢正常回复）
+    _CROSS_GROUP_SUMMARY_TIMEOUT = 20.0
+
+    async def _summarize_cross_group_records(
+        self,
+        platform_id: str,
+        records: List[str],
+        event: AstrMessageEvent,
+    ) -> Optional[str]:
+        """调 LLM 把跨群记忆原始记录压缩成话题摘要；失败返回 None（降级）。
+
+        失败情形（均返回 None，由调用方回退原始记录注入）：
+        - 无可用 provider（未配置且取不到当前会话模型）
+        - 调用异常或超时（用 asyncio.wait，超时不 cancel task，与
+          _segment_by_llm 的做法一致）
+        - 返回空文本
+        同一份记忆（指纹 = 条数 + 首末条内容）在缓存 TTL 内直接复用摘要。
+        """
+        fingerprint = (
+            len(records),
+            records[0] if records else "",
+            records[-1] if records else "",
+        )
+        cached = self._cross_group_summary_cache.get(platform_id)
+        if (
+            cached
+            and cached.get("fingerprint") == fingerprint
+            and time.time() - cached.get("ts", 0.0)
+            < self._CROSS_GROUP_SUMMARY_CACHE_TTL
+        ):
+            return cached.get("summary")
+
+        provider_id = self._cross_group_summary_provider_id
+        if not provider_id:
+            try:
+                provider_id = await self.context.get_current_chat_provider_id(
+                    umo=event.unified_msg_origin
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"[CrossGroupMemory] 获取摘要 provider 失败: {e}")
+                provider_id = ""
+        if not provider_id:
+            logger.warning(
+                "[CrossGroupMemory] 记忆摘要无可用 provider，降级原始记录注入"
+            )
+            return None
+
+        _task = asyncio.ensure_future(
+            self.context.llm_generate(
+                chat_provider_id=provider_id,
+                system_prompt=self._CROSS_GROUP_SUMMARY_PROMPT,
+                prompt="\n".join(records),
+            )
+        )
+        try:
+            _done, _pending = await asyncio.wait(
+                {_task}, timeout=self._CROSS_GROUP_SUMMARY_TIMEOUT
+            )
+            if _task not in _done:
+                logger.warning(
+                    f"[CrossGroupMemory] 记忆摘要超时"
+                    f"（>{self._CROSS_GROUP_SUMMARY_TIMEOUT}s），降级原始记录注入"
+                )
+                return None
+            resp = _task.result()
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[CrossGroupMemory] 记忆摘要调用异常，降级原始记录注入: {e}")
+            return None
+        summary = (resp.completion_text or "").strip() if resp else ""
+        if not summary:
+            logger.warning("[CrossGroupMemory] 记忆摘要返回空，降级原始记录注入")
+            return None
+        # 防御：异常超长说明模型没遵守指令，截断避免反向膨胀 token
+        if len(summary) > 1200:
+            summary = summary[:1200]
+        self._cross_group_summary_cache[platform_id] = {
+            "fingerprint": fingerprint,
+            "summary": summary,
+            "ts": time.time(),
+        }
+        logger.info(
+            f"[CrossGroupMemory] 记忆摘要完成（{len(records)} 条 → {len(summary)} 字）"
+        )
+        return summary
+
     @filter.on_llm_request()
     async def on_cross_group_llm_request(
         self, event: AstrMessageEvent, req: ProviderRequest
     ) -> None:
-        """将同平台其他群的最近共享上下文注入 LLM 请求。"""
+        """将同平台其他群的最近共享上下文注入 LLM 请求。
+
+        记录数超过阈值且开启摘要时，先调 LLM 压缩成话题摘要再注入，
+        而不是把几十条原始消息全部塞进 prompt（省 token，也更聚焦重点）。
+        """
         if not self._cross_group_enable or self._cross_group_store is None:
             return
         try:
             if event.get_message_type() != MessageType.GROUP_MESSAGE:
+                return
+            # 跨群记忆被分级开关单独关闭时不注入
+            if not self._is_memory_scope_enabled(event):
                 return
             platform_id = event.get_platform_id()
             if not platform_id:
@@ -1837,12 +2238,31 @@ class CurrentCortexPlugin(Star):
             )
             if not shared:
                 return
-            block = (
-                "<system_reminder>"
+            body = "\n".join(shared)
+            header = (
                 "You are also active in other groups of the same platform. "
                 "Below is recent shared context from those groups:\n"
-                "--- BEGIN SHARED CONTEXT ---\n"
-                + "\n".join(shared)
+            )
+            # 记录数超过阈值时优先注入 LLM 压缩后的话题摘要
+            if (
+                self._cross_group_summary_enable
+                and len(shared) > self._cross_group_summary_threshold
+            ):
+                summary = await self._summarize_cross_group_records(
+                    platform_id, shared, event
+                )
+                if summary:
+                    body = summary
+                    header = (
+                        "You are also active in other groups of the same platform. "
+                        "Below is a summarized digest of recent shared context "
+                        "from those groups:\n"
+                    )
+            block = (
+                "<system_reminder>"
+                + header
+                + "--- BEGIN SHARED CONTEXT ---\n"
+                + body
                 + "\n--- END SHARED CONTEXT ---\n</system_reminder>"
             )
             req.extra_user_content_parts.append(TextPart(text=block))
@@ -1928,12 +2348,17 @@ class CurrentCortexPlugin(Star):
             f"群号：{self._PROMO_QQ_GROUP}\n欢迎加入交流使用心得～"
         )
 
-    @filter.command("cc")
+    @filter.command("cc", alias={"帮助", "help", "菜单"})
     async def command_list_command(self, event: AstrMessageEvent):
-        """CurrentCortex 插件入口：/cc 或 /cc help 查看命令总览。"""
+        """CurrentCortex 插件总入口：/cc、/帮助、/help、/菜单 查看命令总览。"""
         # event.message_str 是完整原始消息（含命令名），需剥掉命令前缀
-        arg = re.sub(r"^[/!！]?\s*cc\s*", "", event.message_str.strip(),
-                      flags=re.IGNORECASE).strip().lower()
+        # （四种入口名都可能是消息前缀，统一剥掉）
+        arg = re.sub(
+            r"^[/!！]?\s*(cc|help|帮助|菜单)\s*",
+            "",
+            event.message_str.strip(),
+            flags=re.IGNORECASE,
+        ).strip().lower()
         if arg in ("", "help", "帮助", "菜单", "功能", "list", "commands"):
             total = sum(len(cat["commands"]) for cat in COMMAND_CATEGORIES)
             try:
@@ -1956,7 +2381,7 @@ class CurrentCortexPlugin(Star):
                 yield event.plain_result(self._command_list_text(total))
         else:
             yield event.plain_result(
-                "💡 发送 /cc 或 /cc help 查看全部命令总览"
+                "💡 发送 /帮助（或 /cc、/help、/菜单）查看全部命令总览"
             )
 
     @staticmethod
@@ -4322,29 +4747,123 @@ class CurrentCortexPlugin(Star):
         return ""
 
 
+    # 单条消息最多解析的链接数（防刷屏与平台限流）
+    _MEDIA_BATCH_LIMIT = 5
+
+    # 失败原因分级 → 用户可读提示（MediaParserError.kind 映射）
+    _MEDIA_ERROR_HINTS = {
+        "deleted": "内容可能已被作者删除或设为私密，无法解析",
+        "expired": "链接已失效（短链过期），请重新从 App 分享获取最新链接",
+        "blocked": "被平台反爬机制拦截，请稍后再试或换个链接",
+        "timeout": "网络超时，请稍后重试",
+        "network": "网络连接异常，请稍后重试",
+        "format": "链接格式无法识别，请发送完整的分享链接",
+        "api": "目标平台接口返回异常，请稍后再试",
+    }
+
+    _MEDIA_PLATFORM_LABELS = {
+        "xiaohongshu": "小红书",
+        "bilibili": "B站",
+        "douyin": "抖音",
+        "weibo": "微博",
+    }
+
+    @classmethod
+    def _format_media_error(cls, exc: Exception) -> str:
+        """把解析异常翻译成分类后的用户提示，而不是甩原始异常文本。
+
+        未带 kind 的未知异常给通用提示；原始信息截断后附在括号里，
+        便于用户反馈问题时定位，又不至于刷屏。
+        """
+        hint = cls._MEDIA_ERROR_HINTS.get(getattr(exc, "kind", "") or "")
+        if not hint:
+            hint = "解析出现未知错误，请稍后重试"
+        detail = str(exc).strip().replace("\n", " ")
+        if detail:
+            return f"{hint}（原始信息：{detail[:80]}）"
+        return hint
+
+    def _record_media_parse_memory(
+        self, event: AstrMessageEvent, platform: str, data: Dict[str, Any]
+    ) -> None:
+        """解析成功后把「谁解析了什么」写入跨群记忆（tag=media）。
+
+        与跨群记忆功能联动：后续对话中机器人能自然提及「你刚才发的那个
+        视频」，而不是解析完就忘了这回事。记忆是增强项，任何失败都静默，
+        不影响解析主流程。
+        """
+        if not self._cross_group_enable or self._cross_group_store is None:
+            return
+        try:
+            # 跨群记忆被分级开关单独关闭时不记录
+            if not self._is_memory_scope_enabled(event):
+                return
+            platform_id = event.get_platform_id()
+            if not platform_id:
+                return
+            title = ""
+            if isinstance(data, dict):
+                title = str(
+                    data.get("title") or data.get("text") or data.get("desc") or ""
+                ).strip()
+            label = self._MEDIA_PLATFORM_LABELS.get(platform, platform)
+            nickname = event.get_sender_name() or "某人"
+            import datetime as _dt
+
+            time_str = _dt.datetime.now().strftime("%H:%M:%S")
+            content = (
+                f"[{nickname}/{time_str}]: "
+                f"解析了{label}内容《{title[:50] if title else '未命名'}》"
+            )
+            self._cross_group_store.record(
+                platform_id, content, self._cross_group_max_cnt, tag="media"
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[CrossGroupMemory] 记录媒体解析失败: {e}")
+
     @filter.command("解析")
     async def media_parse_command(self, event: AstrMessageEvent):
-        """自动解析小红书、B站和抖音媒体链接。"""
-        user_name = event.get_sender_name()
+        """自动解析小红书、B站、抖音、微博媒体链接（支持批量，最多 5 条）。"""
         message_str = event.message_str.strip()
         if self._is_help_command(message_str):
             yield event.plain_result(self._with_promo(MEDIA_PARSER_HELP_TEXT))
             return
-        url = self._parse_media_url(message_str)
-        if not url:
+        urls = self._parse_media_urls(message_str)
+        if not urls:
             yield event.plain_result("请提供有效的媒体链接")
             return
-        try:
-            result = await self._media_parser.parse(url)
-            platform = result.get("platform", "")
-            data = result.get("data", {})
-            response_items = self._format_media_response(platform, data, event)
-            for item in response_items:
-                yield item
-        except MediaParserError as e:
-            yield event.plain_result(f"解析失败: {str(e)}")
-        except Exception as e:
-            yield event.plain_result(f"发生未知错误: {str(e)}")
+        if len(urls) > self._MEDIA_BATCH_LIMIT:
+            # 先取原始条数再截断，否则提示里的数量恒等于上限值
+            total = len(urls)
+            urls = urls[: self._MEDIA_BATCH_LIMIT]
+            yield event.plain_result(
+                f"📎 检测到 {total} 条链接，单次最多解析 "
+                f"{self._MEDIA_BATCH_LIMIT} 条（防刷屏），已取前 "
+                f"{self._MEDIA_BATCH_LIMIT} 条"
+            )
+        multiple = len(urls) > 1
+        for idx, url in enumerate(urls, 1):
+            if multiple:
+                yield event.plain_result(f"🔗 链接 {idx}/{len(urls)}")
+            try:
+                result = await self._media_parser.parse(url)
+                platform = result.get("platform", "")
+                data = result.get("data", {})
+                for item in self._format_media_response(platform, data, event):
+                    yield item
+                # 解析记录计入跨群记忆（tag=media），供后续对话自然回溯
+                self._record_media_parse_memory(event, platform, data)
+            except MediaParserError as e:
+                yield event.plain_result(
+                    f"解析失败{f'（链接 {idx}/{len(urls)}）' if multiple else ''}: "
+                    f"{self._format_media_error(e)}"
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.error(f"[MediaParse] 解析未知异常: {e}", exc_info=True)
+                yield event.plain_result(
+                    f"解析失败{f'（链接 {idx}/{len(urls)}）' if multiple else ''}: "
+                    f"{self._format_media_error(e)}"
+                )
 
     @filter.command("xhs", alias={"小红书"})
     async def xhs_parse_command(self, event: AstrMessageEvent):
@@ -4358,11 +4877,16 @@ class CurrentCortexPlugin(Star):
             yield event.plain_result("请提供有效的小红书链接")
             return
         try:
-            data = await self._media_parser.xiaohongshu.parse(url)
+            result = await self._media_parser.parse_platform("xiaohongshu", url)
+            data = result.get("data", {})
             for item in self._format_xiaohongshu_response(data, event):
                 yield item
-        except Exception as e:
-            yield event.plain_result(f"小红书解析失败: {str(e)}")
+            self._record_media_parse_memory(event, "xiaohongshu", data)
+        except MediaParserError as e:
+            yield event.plain_result(f"小红书解析失败: {self._format_media_error(e)}")
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"[MediaParse] xhs 未知异常: {e}", exc_info=True)
+            yield event.plain_result(f"小红书解析失败: {self._format_media_error(e)}")
 
     @filter.command("bilibili", alias={"B站", "b站"})
     async def bilibili_parse_command(self, event: AstrMessageEvent):
@@ -4376,11 +4900,16 @@ class CurrentCortexPlugin(Star):
             yield event.plain_result("请提供有效的B站链接")
             return
         try:
-            data = await self._media_parser.bilibili.parse(url)
+            result = await self._media_parser.parse_platform("bilibili", url)
+            data = result.get("data", {})
             for item in self._format_bilibili_response(data, event):
                 yield item
-        except Exception as e:
-            yield event.plain_result(f"B站解析失败: {str(e)}")
+            self._record_media_parse_memory(event, "bilibili", data)
+        except MediaParserError as e:
+            yield event.plain_result(f"B站解析失败: {self._format_media_error(e)}")
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"[MediaParse] bilibili 未知异常: {e}", exc_info=True)
+            yield event.plain_result(f"B站解析失败: {self._format_media_error(e)}")
 
     @filter.command("douyin", alias={"抖音"})
     async def douyin_parse_command(self, event: AstrMessageEvent):
@@ -4394,11 +4923,16 @@ class CurrentCortexPlugin(Star):
             yield event.plain_result("请提供有效的抖音链接")
             return
         try:
-            data = await self._media_parser.douyin.parse(url)
+            result = await self._media_parser.parse_platform("douyin", url)
+            data = result.get("data", {})
             for item in self._format_douyin_response(data, event):
                 yield item
-        except Exception as e:
-            yield event.plain_result(f"抖音解析失败: {str(e)}")
+            self._record_media_parse_memory(event, "douyin", data)
+        except MediaParserError as e:
+            yield event.plain_result(f"抖音解析失败: {self._format_media_error(e)}")
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"[MediaParse] douyin 未知异常: {e}", exc_info=True)
+            yield event.plain_result(f"抖音解析失败: {self._format_media_error(e)}")
 
     @filter.command("weibo", alias={"微博"})
     async def weibo_parse_command(self, event: AstrMessageEvent):
@@ -4412,40 +4946,58 @@ class CurrentCortexPlugin(Star):
             yield event.plain_result("请提供有效的微博链接")
             return
         try:
-            data = await self._media_parser.weibo.parse(url)
+            result = await self._media_parser.parse_platform("weibo", url)
+            data = result.get("data", {})
             for item in self._format_weibo_response(data, event):
                 yield item
-        except Exception as e:
-            yield event.plain_result(f"微博解析失败: {str(e)}")
+            self._record_media_parse_memory(event, "weibo", data)
+        except MediaParserError as e:
+            yield event.plain_result(f"微博解析失败: {self._format_media_error(e)}")
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"[MediaParse] weibo 未知异常: {e}", exc_info=True)
+            yield event.plain_result(f"微博解析失败: {self._format_media_error(e)}")
 
-    def _parse_media_url(self, message: str) -> Optional[str]:
+    _MEDIA_COMMAND_WORDS = (
+        "解析", "xhs", "小红书", "bilibili", "B站", "b站",
+        "douyin", "抖音", "weibo", "微博",
+    )
+
+    def _parse_media_urls(self, message: str) -> List[str]:
+        """从消息中提取全部媒体链接（去重保序），供 /解析 批量处理。"""
         cleaned = re.sub(
-            r"^[/!！]\s*(解析|xhs|小红书|bilibili|B站|b站|douyin|抖音|weibo|微博)\s*",
+            r"^[/!！]\s*(" + "|".join(self._MEDIA_COMMAND_WORDS) + r")\s*",
             "",
             message.strip(),
             flags=re.IGNORECASE,
         )
         cleaned = re.sub(
-            r"^(解析|xhs|小红书|bilibili|B站|b站|douyin|抖音|weibo|微博)\s*",
+            r"^(" + "|".join(self._MEDIA_COMMAND_WORDS) + r")\s*",
             "",
             cleaned.strip(),
             flags=re.IGNORECASE,
         )
         cleaned = cleaned.strip()
         if not cleaned or cleaned.lower() in ("help", "-h", "--help", "帮助"):
-            return None
-        url_pattern = re.compile(r"https?://[^\s]+")
-        match = url_pattern.search(cleaned)
-        if match:
-            return match.group(0)
-        if (
-            cleaned.startswith("xhslink.com/")
-            or cleaned.startswith("b23.tv/")
-            or cleaned.startswith("v.douyin.com/")
-            or cleaned.startswith("t.cn/")
-        ):
-            return f"https://{cleaned}"
-        return None
+            return []
+        urls = []
+        seen = set()
+        for match in re.finditer(r"https?://[^\s]+", cleaned):
+            url = match.group(0).strip().rstrip("，。,.！!）)")
+            if url and url not in seen:
+                seen.add(url)
+                urls.append(url)
+        if urls:
+            return urls
+        # 无完整 URL：兼容裸短链域名写法（xhslink.com/xxx 等）
+        for prefix in ("xhslink.com/", "b23.tv/", "v.douyin.com/", "t.cn/"):
+            if cleaned.startswith(prefix):
+                return [f"https://{cleaned}"]
+        return []
+
+    def _parse_media_url(self, message: str) -> Optional[str]:
+        """从消息中提取首个媒体链接（平台专用命令仍单链接处理）。"""
+        urls = self._parse_media_urls(message)
+        return urls[0] if urls else None
 
     def _format_media_response(
         self, platform: str, data: Dict[str, Any], event: AstrMessageEvent
