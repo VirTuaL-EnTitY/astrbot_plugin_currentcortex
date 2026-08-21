@@ -1,6 +1,9 @@
 import re
 import json
 import asyncio
+import threading
+import time
+from collections import OrderedDict
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse, parse_qs, unquote
 
@@ -9,9 +12,46 @@ from astrbot.api import logger
 
 
 class MediaParserError(Exception):
-    def __init__(self, message: str, status_code: int = 0):
+    """媒体解析统一异常。
+
+    kind 用于失败原因分级（见 _MEDIA_ERROR_HINTS 的消费端），便于把原始异常
+    翻译成用户可理解的提示，而不是直接甩一坨异常文本：
+        - format:  链接格式不识别 / 提取不到内容 ID
+        - expired: 短链失效、链接过期
+        - deleted: 内容已删除 / 设为私密 / 不存在
+        - blocked: 平台反爬 / 风控拦截（403/412/418/429 等）
+        - timeout: 网络超时
+        - network: 网络连接异常
+        - api:     上游接口返回业务错误（其余 HTTP 状态码）
+        - unknown: 未分类异常
+    """
+
+    KIND_FORMAT = "format"
+    KIND_EXPIRED = "expired"
+    KIND_DELETED = "deleted"
+    KIND_BLOCKED = "blocked"
+    KIND_TIMEOUT = "timeout"
+    KIND_NETWORK = "network"
+    KIND_API = "api"
+    KIND_UNKNOWN = "unknown"
+
+    def __init__(self, message: str, status_code: int = 0, kind: str = "unknown"):
         super().__init__(message)
         self.status_code = status_code
+        self.kind = kind
+
+    @staticmethod
+    def kind_from_status(status_code: int) -> str:
+        """把 HTTP 状态码映射为失败原因分级。"""
+        if status_code in (403, 412, 418, 429):
+            return MediaParserError.KIND_BLOCKED
+        if status_code == 404:
+            return MediaParserError.KIND_DELETED
+        if status_code in (408, 504):
+            return MediaParserError.KIND_TIMEOUT
+        if status_code >= 400:
+            return MediaParserError.KIND_API
+        return MediaParserError.KIND_UNKNOWN
 
 
 class URLExtractor:
@@ -137,15 +177,21 @@ class BaseMediaParser:
                             f"[{self.__class__.__name__}] HTTP {resp.status}: {error_text[:500]}"
                         )
                         raise MediaParserError(
-                            f"请求失败 (HTTP {resp.status})", status_code=resp.status
+                            f"请求失败 (HTTP {resp.status})",
+                            status_code=resp.status,
+                            kind=MediaParserError.kind_from_status(resp.status),
                         )
                     return await resp.json()
             except aiohttp.ClientError as e:
                 logger.error(f"[{self.__class__.__name__}] Network error: {e}")
-                raise MediaParserError(f"网络请求失败: {str(e)}") from e
+                raise MediaParserError(
+                    f"网络请求失败: {str(e)}", kind=MediaParserError.KIND_NETWORK
+                ) from e
             except asyncio.TimeoutError:
                 logger.error(f"[{self.__class__.__name__}] Request timeout")
-                raise MediaParserError("请求超时，请稍后再试")
+                raise MediaParserError(
+                    "请求超时，请稍后再试", kind=MediaParserError.KIND_TIMEOUT
+                )
 
     async def _fetch_text(
         self,
@@ -171,15 +217,21 @@ class BaseMediaParser:
                             f"[{self.__class__.__name__}] HTTP {resp.status}: {error_text[:500]}"
                         )
                         raise MediaParserError(
-                            f"请求失败 (HTTP {resp.status})", status_code=resp.status
+                            f"请求失败 (HTTP {resp.status})",
+                            status_code=resp.status,
+                            kind=MediaParserError.kind_from_status(resp.status),
                         )
                     return await resp.text()
             except aiohttp.ClientError as e:
                 logger.error(f"[{self.__class__.__name__}] Network error: {e}")
-                raise MediaParserError(f"网络请求失败: {str(e)}") from e
+                raise MediaParserError(
+                    f"网络请求失败: {str(e)}", kind=MediaParserError.KIND_NETWORK
+                ) from e
             except asyncio.TimeoutError:
                 logger.error(f"[{self.__class__.__name__}] Request timeout")
-                raise MediaParserError("请求超时，请稍后再试")
+                raise MediaParserError(
+                    "请求超时，请稍后再试", kind=MediaParserError.KIND_TIMEOUT
+                )
 
 
 class XiaoHongShuParser(BaseMediaParser):
@@ -193,7 +245,10 @@ class XiaoHongShuParser(BaseMediaParser):
         """解析小红书链接"""
         note_id = URLExtractor.extract_xiaohongshu(url_or_text)
         if not note_id:
-            raise MediaParserError("未能从小红书链接中提取到笔记ID，请检查链接格式")
+            raise MediaParserError(
+                "未能从小红书链接中提取到笔记ID，请检查链接格式",
+                kind=MediaParserError.KIND_FORMAT,
+            )
 
         # 短链接需要展开
         if "xhslink.com" in url_or_text:
@@ -216,7 +271,9 @@ class XiaoHongShuParser(BaseMediaParser):
                         return match.group(1)
             except Exception as e:
                 logger.error(f"[XiaoHongShu] 短链接解析失败: {e}")
-        raise MediaParserError("短链接解析失败，请使用完整链接")
+        raise MediaParserError(
+            "短链接解析失败，请使用完整链接", kind=MediaParserError.KIND_EXPIRED
+        )
 
     async def _fetch_note_detail(self, note_id: str) -> Dict[str, Any]:
         """获取笔记详情"""
@@ -350,7 +407,10 @@ class BilibiliParser(BaseMediaParser):
                 bvid = await self._resolve_short_link(url_or_text)
                 video_info = {"type": "bv", "id": bvid}
             else:
-                raise MediaParserError("未能从B站链接中提取到视频ID，请检查链接格式")
+                raise MediaParserError(
+                    "未能从B站链接中提取到视频ID，请检查链接格式",
+                    kind=MediaParserError.KIND_FORMAT,
+                )
 
         vid = video_info["id"]
         vid_type = video_info["type"]
@@ -376,7 +436,9 @@ class BilibiliParser(BaseMediaParser):
                         return match.group(1)
             except Exception as e:
                 logger.error(f"[Bilibili] 短链接解析失败: {e}")
-        raise MediaParserError("B站短链接解析失败，请使用完整链接")
+        raise MediaParserError(
+            "B站短链接解析失败，请使用完整链接", kind=MediaParserError.KIND_EXPIRED
+        )
 
     @staticmethod
     def _av2bv(av_number: int) -> str:
@@ -402,11 +464,21 @@ class BilibiliParser(BaseMediaParser):
 
         if data.get("code") != 0:
             message = data.get("message", "未知错误")
-            raise MediaParserError(f"B站API错误: {message}")
+            # B站「稿件不可见/不存在」类业务错误（如 -404 啊叻？不见了），
+            # 归类为内容已删除而非接口异常
+            kind = (
+                MediaParserError.KIND_DELETED
+                if any(kw in str(message) for kw in ("不存在", "不见了", "删除", "失效"))
+                else MediaParserError.KIND_API
+            )
+            raise MediaParserError(f"B站API错误: {message}", kind=kind)
 
         video_data = data.get("data", {})
         if not video_data:
-            raise MediaParserError("未能获取到视频数据")
+            raise MediaParserError(
+                "未能获取到视频数据（视频可能已被删除或设为私密）",
+                kind=MediaParserError.KIND_DELETED,
+            )
 
         # 构建返回结果
         result = {
@@ -497,7 +569,10 @@ class DouyinParser(BaseMediaParser):
             if "v.douyin.com" in url_or_text:
                 video_id = await self._resolve_short_link(url_or_text)
             else:
-                raise MediaParserError("未能从抖音链接中提取到视频ID，请检查链接格式")
+                raise MediaParserError(
+                    "未能从抖音链接中提取到视频ID，请检查链接格式",
+                    kind=MediaParserError.KIND_FORMAT,
+                )
 
         return await self._fetch_video_detail(video_id)
 
@@ -516,7 +591,9 @@ class DouyinParser(BaseMediaParser):
                         return match.group(1)
             except Exception as e:
                 logger.error(f"[Douyin] 短链接解析失败: {e}")
-        raise MediaParserError("抖音短链接解析失败，请使用完整链接")
+        raise MediaParserError(
+            "抖音短链接解析失败，请使用完整链接", kind=MediaParserError.KIND_EXPIRED
+        )
 
     async def _fetch_video_detail(self, video_id: str) -> Dict[str, Any]:
         """获取抖音视频详情"""
@@ -645,7 +722,10 @@ class WeiboParser(BaseMediaParser):
         """解析微博链接"""
         mid = URLExtractor.extract_weibo(url_or_text)
         if not mid:
-            raise MediaParserError("未能从微博链接中提取到帖子ID，请检查链接格式")
+            raise MediaParserError(
+                "未能从微博链接中提取到帖子ID，请检查链接格式",
+                kind=MediaParserError.KIND_FORMAT,
+            )
 
         # t.cn 短链需要先跳转拿到真实 mid
         if "t.cn/" in url_or_text:
@@ -668,7 +748,9 @@ class WeiboParser(BaseMediaParser):
                         return mid
             except Exception as e:
                 logger.error(f"[Weibo] 短链接解析失败: {e}")
-        raise MediaParserError("微博短链接解析失败，请使用完整链接")
+        raise MediaParserError(
+            "微博短链接解析失败，请使用完整链接", kind=MediaParserError.KIND_EXPIRED
+        )
 
     async def _fetch_post_detail(self, mid: str, original_url: str) -> Dict[str, Any]:
         """通过移动版接口获取微博详情，失败时回退到网页 og 标签解析"""
@@ -756,34 +838,129 @@ class WeiboParser(BaseMediaParser):
         return result
 
 
-class MediaParserManager:
-    """媒体解析管理器"""
+class MediaParseCache:
+    """媒体解析结果的内存 LRU 缓存（url → 解析结果，带 TTL）。
 
-    def __init__(self, timeout: int = 20):
+    群里经常有人重复发同一条链接，命中缓存可直接返回，减少对目标平台的
+    请求频率，也降低触发反爬/封 IP 的概率。仅缓存成功结果（异常不缓存）。
+
+    线程模型：AstrBot 命令处理器跑在事件循环内，本身单线程；加锁是防御
+    未来可能的多线程调用（与插件内其他存储风格一致）。
+    """
+
+    def __init__(self, ttl_seconds: float = 600.0, max_items: int = 128):
+        self._ttl = max(0.0, float(ttl_seconds))
+        self._max_items = max(1, int(max_items))
+        self._lock = threading.Lock()
+        # key -> (expire_at, value)；OrderedDict 实现 LRU（最近访问移到末尾）
+        self._store: "OrderedDict[str, tuple]" = OrderedDict()
+
+    def get(self, key: str) -> Optional[Dict[str, Any]]:
+        """取缓存；过期或不存在返回 None，命中时会刷新 LRU 位置。"""
+        with self._lock:
+            item = self._store.get(key)
+            if item is None:
+                return None
+            expire_at, value = item
+            if self._ttl <= 0 or time.time() >= expire_at:
+                # 过期惰性清理
+                self._store.pop(key, None)
+                return None
+            self._store.move_to_end(key)
+            return value
+
+    def put(self, key: str, value: Dict[str, Any]) -> None:
+        """写入缓存并裁剪到 max_items（淘汰最久未使用条目）。"""
+        expire_at = time.time() + self._ttl if self._ttl > 0 else float("inf")
+        with self._lock:
+            self._store[key] = (expire_at, value)
+            self._store.move_to_end(key)
+            while len(self._store) > self._max_items:
+                self._store.popitem(last=False)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._store.clear()
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._store)
+
+
+class MediaParserManager:
+    """媒体解析管理器（带结果缓存）"""
+
+    # 缓存 key 归一化：取文本中首个 URL 部分（分享文案可能带表情/前缀）
+    _URL_RE = re.compile(r"https?://[^\s]+")
+
+    def __init__(
+        self,
+        timeout: int = 20,
+        cache_enable: bool = True,
+        cache_ttl: float = 600.0,
+        cache_max_items: int = 128,
+    ):
         self.xiaohongshu = XiaoHongShuParser(timeout)
         self.bilibili = BilibiliParser(timeout)
         self.douyin = DouyinParser(timeout)
         self.weibo = WeiboParser(timeout)
+        self._cache = MediaParseCache(ttl_seconds=cache_ttl, max_items=cache_max_items) if cache_enable else None
+
+    def _cache_key(self, url_or_text: str) -> str:
+        """归一化缓存 key：取首个 URL；无 URL 时退回原文 strip。"""
+        match = self._URL_RE.search(url_or_text or "")
+        return (match.group(0) if match else (url_or_text or "").strip()).strip().rstrip("，。,.！!）)")
 
     async def parse(self, url_or_text: str) -> Dict[str, Any]:
-        """自动识别平台并解析"""
-        platform = URLExtractor.detect_platform(url_or_text)
+        """自动识别平台并解析（结果走缓存）"""
+        return await self.parse_platform(None, url_or_text)
+
+    async def parse_platform(
+        self, platform: Optional[str], url_or_text: str
+    ) -> Dict[str, Any]:
+        """解析指定平台（platform 为 None 时自动识别），统一走缓存。
+
+        Args:
+            platform: "xiaohongshu" / "bilibili" / "douyin" / "weibo"，None=自动识别。
+            url_or_text: 原始链接或分享文本。
+
+        Returns:
+            ``{"platform": <平台名>, "data": <解析结果>}``。
+
+        Raises:
+            MediaParserError: 解析失败（带 kind 分级）。失败结果不缓存，
+                避免瞬时网络抖动把错误固化 10 分钟。
+        """
+        key = self._cache_key(url_or_text)
+        if self._cache is not None:
+            cached = self._cache.get(key)
+            if cached is not None:
+                logger.debug(f"[MediaParser] 缓存命中: {key[:80]}")
+                return cached
+
+        if platform is None:
+            platform = URLExtractor.detect_platform(url_or_text)
 
         if platform == "xiaohongshu":
-            return {
+            result = {
                 "platform": "xiaohongshu",
                 "data": await self.xiaohongshu.parse(url_or_text),
             }
         elif platform == "bilibili":
-            return {
+            result = {
                 "platform": "bilibili",
                 "data": await self.bilibili.parse(url_or_text),
             }
         elif platform == "douyin":
-            return {"platform": "douyin", "data": await self.douyin.parse(url_or_text)}
+            result = {"platform": "douyin", "data": await self.douyin.parse(url_or_text)}
         elif platform == "weibo":
-            return {"platform": "weibo", "data": await self.weibo.parse(url_or_text)}
+            result = {"platform": "weibo", "data": await self.weibo.parse(url_or_text)}
         else:
             raise MediaParserError(
-                "未能识别链接所属平台，请检查链接格式是否支持（小红书/B站/抖音/微博）"
+                "未能识别链接所属平台，请检查链接格式是否支持（小红书/B站/抖音/微博）",
+                kind=MediaParserError.KIND_FORMAT,
             )
+
+        if self._cache is not None:
+            self._cache.put(key, result)
+        return result

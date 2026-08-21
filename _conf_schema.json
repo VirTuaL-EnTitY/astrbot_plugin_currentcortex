@@ -110,13 +110,46 @@
     "type": "int",
     "default": 0
   },
+  "cross_group_summary_enable": {
+    "description": "【跨群聊记忆 LLM 摘要】开启后，注入条数超过下方阈值时，先调用 LLM 把原始记录压缩成一段话题摘要（「最近大家在聊 XX、YY」）再注入正文，而不是把几十条原始消息全部塞进 prompt——省 token，也让回复更像「记得住重点」。摘要失败（无模型/超时）自动降级为原始记录注入。注意：开启后每次记忆变化都会产生一次额外的 LLM 调用（同一份记忆 5 分钟内复用摘要）",
+    "type": "bool",
+    "default": false
+  },
+  "cross_group_summary_threshold": {
+    "description": "跨群聊记忆 LLM 摘要：触发压缩的记录条数阈值（注入条数超过该值才调 LLM 摘要，低于则直接注入原始记录）",
+    "type": "int",
+    "default": 20,
+    "slider": {"min": 5, "max": 100, "step": 5}
+  },
+  "cross_group_summary_provider_id": {
+    "description": "跨群聊记忆 LLM 摘要专用模型。留空则复用当前会话使用的模型；建议选择廉价快速的非推理模型以省时省钱",
+    "type": "string",
+    "default": "",
+    "_special": "select_provider"
+  },
+  "media_parse_cache_enable": {
+    "description": "【媒体解析结果缓存】开启后，相同链接在缓存有效期内直接返回上次解析结果，减少对小红书/B站/抖音/微博的请求频率，降低触发反爬/封 IP 的概率。仅缓存成功结果，失败会实时重试",
+    "type": "bool",
+    "default": true
+  },
+  "media_parse_cache_ttl": {
+    "description": "媒体解析结果缓存有效期（秒）。下载/播放链接本身有时效性，不建议设置过长；默认 600（10 分钟）",
+    "type": "int",
+    "default": 600,
+    "slider": {"min": 60, "max": 3600, "step": 60}
+  },
   "group_switch_enable": {
-    "description": "启用「按群聊独立开关插件」功能。开启后，可用 /开关 命令在单个群聊中关闭/开启本插件全部命令",
+    "description": "启用「按群聊独立开关插件」功能。开启后，可用 /开关 命令在单个群聊中关闭/开启本插件，支持只关某一类功能（如 /开关 off media 2h 只关媒体解析）",
     "type": "bool",
     "default": true
   },
   "group_switch_admin_only": {
     "description": "是否仅允许群管理员操作 /开关 命令（建议保持开启，避免任意成员随意开关）",
+    "type": "bool",
+    "default": true
+  },
+  "group_switch_hint_enable": {
+    "description": "群聊功能被关闭期间，第一次收到本插件指令时回复一句简短提示（如「本群已关闭机器人，管理员可发 /开关 on 恢复」），同一群同一功能 1 小时内仅提醒一次，避免新用户 @机器人没反应摸不着头脑",
     "type": "bool",
     "default": true
   },
