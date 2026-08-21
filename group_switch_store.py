@@ -150,6 +150,17 @@ class GroupSwitchStore:
                 return False
             return True
 
+    def has_disabled_entry(self, umo: str, scope: Optional[str] = None) -> bool:
+        """该（全局或域级）禁用条目本身是否存在。
+
+        与 is_enabled 不同：不考虑「全局禁用对 scope 的连带影响」，
+        只看这一个条目有没有被显式设置——用于区分「域被单独关闭」和
+        「仅因全局关闭而不可用」。
+        """
+        with self._lock:
+            self._purge_expired_locked()
+            return self._scoped_key(umo, scope) in self._disabled
+
     def set_disabled(
         self,
         umo: str,

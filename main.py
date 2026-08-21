@@ -1814,19 +1814,31 @@ class CurrentCortexPlugin(Star):
                     f"ℹ️ 本群{target_desc}已经是启用状态"
                 )
                 return
-            self._group_switch_store.set_enabled(umo, scope=scope)
-            logger.info(
-                f"[GroupSwitch] 用户 {user_name} 启用了会话 {umo} 的"
-                f"{'功能域 ' + scope if scope else '全部命令'}"
-            )
-            if scope and not self._group_switch_store.is_enabled(umo, scope):
-                # 该功能域本来就没被单独关，真正拦着它的是全局关闭
+            if (
+                scope
+                and not self._group_switch_store.is_enabled(umo)
+                and not self._group_switch_store.has_disabled_entry(umo, scope)
+            ):
+                # 该功能域并未被单独关闭，真正拦着它的是全局关闭：
+                # 仅说明情况，不做任何状态变更（避免误动其他条目）
                 yield event.plain_result(
                     f"ℹ️ 本群{target_desc}并未被单独关闭，"
                     "但本群插件全局处于关闭状态\n"
                     "💡 请先发送 /开关 on 恢复全局，再单独调整各功能域"
                 )
                 return
+            self._group_switch_store.set_enabled(umo, scope=scope)
+            logger.info(
+                f"[GroupSwitch] 用户 {user_name} 启用了会话 {umo} 的"
+                f"{'功能域 ' + scope if scope else '全部命令'}"
+            )
+            still_blocked_note = ""
+            if scope and not self._group_switch_store.is_enabled(umo, scope):
+                # 该域条目已按请求移除，但全局仍处于关闭状态
+                still_blocked_note = (
+                    "\n⚠️ 本群插件全局仍处于关闭状态，"
+                    "恢复全局（/开关 on）后该功能才会生效"
+                )
             global_note = ""
             if not scope and self._group_switch_store.list_disabled_detail():
                 # 全局恢复后，仍可能残留被单独关闭的功能域
@@ -1835,7 +1847,8 @@ class CurrentCortexPlugin(Star):
                     "可用 /开关 on <功能域> 逐个恢复，/开关列表 可查看"
                 )
             yield event.plain_result(
-                f"✅ 已在本群重新启用 CurrentCortex 插件{target_desc}{global_note}"
+                f"✅ 已在本群重新启用 CurrentCortex 插件{target_desc}"
+                f"{still_blocked_note}{global_note}"
             )
             return
 
@@ -4820,9 +4833,11 @@ class CurrentCortexPlugin(Star):
             yield event.plain_result("请提供有效的媒体链接")
             return
         if len(urls) > self._MEDIA_BATCH_LIMIT:
+            # 先取原始条数再截断，否则提示里的数量恒等于上限值
+            total = len(urls)
             urls = urls[: self._MEDIA_BATCH_LIMIT]
             yield event.plain_result(
-                f"📎 检测到 {len(urls)} 条以上链接，单次最多解析 "
+                f"📎 检测到 {total} 条链接，单次最多解析 "
                 f"{self._MEDIA_BATCH_LIMIT} 条（防刷屏），已取前 "
                 f"{self._MEDIA_BATCH_LIMIT} 条"
             )
